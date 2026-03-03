@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-    const token = req.query.token || req.headers["x-slack-token"] || process.env.SLACK_BOT_TOKEN;
+    const token = req.query.token || req.headers["x-slack-token"];
     if (!token) return res.status(400).json({ error: "No Slack token provided" });
 
   try {
