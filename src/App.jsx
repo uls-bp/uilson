@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_REDIRECT = window.location.origin;
 const SCOPES =
-  "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
+  "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar";
 
 const SLACK_CLIENT_ID = import.meta.env.VITE_SLACK_CLIENT_ID;
 const SLACK_USER_SCOPES = "channels:read,channels:history,groups:read,groups:history,chat:write,users:read";
@@ -54,6 +54,7 @@ async function fetchGmail(token) {
     const h = (n) =>
       (d.payload?.headers || []).find((x) => x.name === n)?.value || "";
     return {
+      id: d.id,
       subject: h("Subject"),
       from: h("From"),
       date: h("Date"),
@@ -96,6 +97,7 @@ async function fetchCalendar(token) {
         );
         const data = await res.json();
         return (data.items || []).map((e) => ({
+          id: e.id,
           summary: e.summary,
           start: e.start?.dateTime || e.start?.date,
           end: e.end?.dateTime || e.end?.date,
@@ -156,7 +158,7 @@ function buildContext(emails, events, slackMsgs) {
     ctx += "\n## Gmail (latest " + emails.length + ")\n";
     emails.forEach((e) => {
       ctx +=
-        "- From:" +
+        "- [ID:" + e.id + "] From:" +
         e.from +
         " Sub:" +
         e.subject +
@@ -171,7 +173,7 @@ function buildContext(emails, events, slackMsgs) {
     ctx += "\n## Calendar (upcoming " + events.length + ")\n";
     events.forEach((e) => {
       ctx +=
-        "- " +
+        "- [ID:" + e.id + "] " +
         e.summary +
         " " +
         e.start +
@@ -325,9 +327,12 @@ export default function App() {
       fetch("/api/slack-userinfo?token=" + encodeURIComponent(slackToken))
         .then((r) => r.json())
         .then((d) => {
-          if (d.ok && d.email) {
-            setSlackEmail(d.email);
-            localStorage.setItem("slack_email", d.email);
+          if (d.ok) {
+            const info = d.email || (d.user ? d.user + " @ " + (d.team || "Slack") : null);
+            if (info) {
+              setSlackEmail(info);
+              localStorage.setItem("slack_email", info);
+            }
           }
         })
         .catch(console.error);
@@ -381,6 +386,7 @@ export default function App() {
             .slice(-20)
             .map((m) => ({ role: m.role, content: m.content })),
           system: systemPrompt,
+          googleToken: token,
         }),
       });
       const data = await res.json();
