@@ -244,9 +244,11 @@ export default function App() {
   const [token, setToken] = useState(localStorage.getItem("g_token") || "");
   const [emails, setEmails] = useState([]);
   const [events, setEvents] = useState([]);
+  const [googleEmail, setGoogleEmail] = useState(localStorage.getItem("g_email") || "");
   const [slackConnected, setSlackConnected] = useState(false);
   const [slackToken, setSlackToken] = useState(localStorage.getItem("slack_token"));
   const [slackMsgs, setSlackMsgs] = useState([]);
+  const [slackEmail, setSlackEmail] = useState(localStorage.getItem("slack_email") || "");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -276,6 +278,18 @@ export default function App() {
         console.error(e);
         if (e.message === "AUTH_EXPIRED") { localStorage.removeItem("g_token"); setToken(null); }
       });
+      // Fetch Google email
+      fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+        headers: { Authorization: "Bearer " + token },
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.emailAddress) {
+            setGoogleEmail(d.emailAddress);
+            localStorage.setItem("g_email", d.emailAddress);
+          }
+        })
+        .catch(console.error);
     }
   }, [token]);
 
@@ -303,6 +317,27 @@ export default function App() {
         .then((r) => {
           setSlackConnected(r.connected);
           setSlackMsgs(r.messages);
+        })
+        .catch(console.error);
+    }
+    // Fetch Slack user email
+    if (slackToken) {
+      fetch("https://slack.com/api/auth.test", {
+        headers: { Authorization: "Bearer " + slackToken },
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.ok && d.user_id) {
+            return fetch("https://slack.com/api/users.info?user=" + d.user_id, {
+              headers: { Authorization: "Bearer " + slackToken },
+            }).then((r) => r.json());
+          }
+        })
+        .then((d) => {
+          if (d?.ok && d.user?.profile?.email) {
+            setSlackEmail(d.user.profile.email);
+            localStorage.setItem("slack_email", d.user.profile.email);
+          }
         })
         .catch(console.error);
     }
@@ -390,17 +425,21 @@ export default function App() {
 
   const logout = () => {
     localStorage.removeItem("g_token");
+    localStorage.removeItem("g_email");
     setToken("");
     setEmails([]);
     setEvents([]);
+    setGoogleEmail("");
   };
 
   /* ─── Sidebar Nav Items ─── */
   const slackLogout = () => {
     localStorage.removeItem("slack_token");
+    localStorage.removeItem("slack_email");
     setSlackToken(null);
     setSlackConnected(false);
     setSlackMsgs([]);
+    setSlackEmail("");
   };
 
   const navItems = [
@@ -755,6 +794,11 @@ export default function App() {
                           <span style={{ color: V.green, fontWeight: 600, fontSize: 14 }}>
                             {"接続済み"}
                           </span>
+                          {googleEmail && (
+                            <span style={{ fontSize: 13, color: V.t3, marginLeft: 8 }}>
+                              ({googleEmail})
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: 13, color: V.t3, marginBottom: 12 }}>
                           Gmail: {emails.length}件 / Calendar: {events.length}件
@@ -853,6 +897,11 @@ export default function App() {
                           <span style={{ color: V.green, fontWeight: 600, fontSize: 14 }}>
                             {"接続済み"}
                           </span>
+                          {slackEmail && (
+                            <span style={{ fontSize: 13, color: V.t3, marginLeft: 8 }}>
+                              ({slackEmail})
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: 13, color: V.t3 }}>
                           {slackMsgs.length}件のメッセージを取得
