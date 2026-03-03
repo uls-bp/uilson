@@ -91,7 +91,7 @@ async function fetchCalendar(token) {
           "https://www.googleapis.com/calendar/v3/calendars/" +
             encodeURIComponent(calId) +
             "/events?maxResults=250&timeMin=" +
-          new Date(Date.now() - 365*24*60*60*1000).toISOString() +
+          new Date().toISOString() +
           "&orderBy=startTime&singleEvents=true",
           { headers }
         );
