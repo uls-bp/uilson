@@ -239,7 +239,7 @@ function extractReply(data) {
   return "Error: unexpected response";
 }
 
-function buildContext(emails, events, slackMsgs, outlookEmails, outlookEvents, spSites, spFiles, teamsChats, teamsChannels, driveFiles) {
+function buildContext(emails, events, slackMsgs, outlookEmails, outlookEvents, spSites, spFiles, teamsChats, teamsChannels, driveFiles, outlookScrapedCal) {
   const dayNames = ["æ¥", "æ", "ç«", "æ°´", "æ¨", "é", "å"];
   let ctx = "";
   if (emails.length) {
@@ -343,6 +343,12 @@ function buildContext(emails, events, slackMsgs, outlookEmails, outlookEvents, s
         "\n";
     });
   }
+  if (outlookScrapedCal && outlookScrapedCal.length) {
+    ctx += "\n## Outlook Calendar (scraped from web, " + outlookScrapedCal.length + " events)\n";
+    outlookScrapedCal.forEach((e) => {
+      ctx += "- " + e.title + " " + e.date + "(" + e.day + ") " + e.start + "-" + e.end + (e.location ? " @" + e.location : "") + (e.organizer ? " by:" + e.organizer : "") + (e.recurring ? " [recurring]" : "") + "\n";
+    });
+  }
       if(spSites.length>0){ctx+="\n\n[SharePoint Sites]\n";ctx+=spSites.map(s=>s.name+" - "+s.url+(s.desc?" ("+s.desc+")":"")).join("\n")}
     if(spFiles.length>0){ctx+="\n\n[SharePoint Files]\n";ctx+=spFiles.map(f=>f.name+" ("+f.siteName+") - "+f.url+(f.isFolder?" [folder]":" "+Math.round((f.size||0)/1024)+"KB")).join("\n")}
     
@@ -423,6 +429,7 @@ export default function App() {
 const [teamsChats, setTeamsChats] = useState([]);
 const [teamsChannels, setTeamsChannels] = useState([]);
 const [driveFiles, setDriveFiles] = useState([]);
+const [outlookScrapedCal, setOutlookScrapedCal] = useState([]);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -430,6 +437,26 @@ const [driveFiles, setDriveFiles] = useState([]);
   const [view, setView] = useState("chat");
   const [sbCollapsed, setSbCollapsed] = useState(false);
   const bottomRef = useRef(null);
+
+  // Outlook calendar scraping via postMessage (bookmarklet)
+  useEffect(() => {
+    const handler = (ev) => {
+      if (ev.origin !== window.location.origin && ev.origin !== "https://outlook.office.com") return;
+      if (ev.data && ev.data.type === "outlook_calendar") {
+        const evts = ev.data.events || [];
+        setOutlookScrapedCal(evts);
+        localStorage.setItem("outlook_scraped_cal", JSON.stringify(evts));
+        console.log("[UILSON] Received " + evts.length + " Outlook calendar events via scraping");
+      }
+    };
+    window.addEventListener("message", handler);
+    // Restore from localStorage on mount
+    try {
+      const saved = localStorage.getItem("outlook_scraped_cal");
+      if (saved) setOutlookScrapedCal(JSON.parse(saved));
+    } catch {}
+    return () => window.removeEventListener("message", handler);
+  }, []);
 
   // Google OAuth (hash fragment)
   useEffect(() => {
@@ -621,7 +648,7 @@ const [driveFiles, setDriveFiles] = useState([]);
           const spD=await fetchAllSharePointData(tk);setSpSites(spD.sites);setSpFiles(spD.files);const tChats=await fetchTeamsChats(tk);setTeamsChats(tChats);const tCh=await fetchTeamsChannelMessages(tk);setTeamsChannels(tCh);
       } catch {}
     }
-    return buildContext(e, ev, sm, oe, oev, spSites, spFiles, teamsChats, teamsChannels, driveFiles);
+    return buildContext(e, ev, sm, oe, oev, spSites, spFiles, teamsChats, teamsChannels, driveFiles, outlookScrapedCal);
   };
 
   const send = async (text) => {
@@ -1405,6 +1432,13 @@ const [driveFiles, setDriveFiles] = useState([]);
                         </a>
                       </>
                     )}
+                    {/* Outlook Web Scraping Status */}
+                    {outlookScrapedCal.length > 0 && (
+                      <div style={{ marginTop: 12, padding: "8px 12px", background: V.inputBg, borderRadius: 8, fontSize: 13, color: V.t2 }}>
+                        {"\ud83d\udcc5 Web\u30b9\u30af\u30ec\u30a4\u30d4\u30f3\u30b0: " + outlookScrapedCal.length + "\u4ef6\u306e\u30ab\u30ec\u30f3\u30c0\u30fc\u30a4\u30d9\u30f3\u30c8\u53d6\u5f97\u6e08\u307f"}
+                        <button onClick={() => { setOutlookScrapedCal([]); localStorage.removeItem("outlook_scraped_cal"); }} style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 4, border: "1px solid " + V.border, background: "transparent", color: V.t3, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>\u30af\u30ea\u30a2</button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1452,6 +1486,7 @@ const [driveFiles, setDriveFiles] = useState([]);
                     { name: "Slack", on: slackConnected },
                     { name: "Outlook Mail", on: !!msToken },
                     { name: "Outlook Cal", on: !!msToken },
+                    { name: "Outlook Cal(Web)", on: outlookScrapedCal.length > 0 },
               { name: "SharePoint", on: spSites.length > 0 },{name:"Teams",on:teamsChats.length>0||teamsChannels.length>0},{name:"Google Drive",on:driveFiles.length>0},
                   ].map((s) => (
                     <span
