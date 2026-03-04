@@ -1,7 +1,5 @@
 // Gemini model fallback chain: try models in order, skip to next on 404/deprecated
 const GEMINI_MODELS = [
-  'gemini-3.1-pro-preview',
-  'gemini-3-flash-preview',
   'gemini-2.5-flash',
   'gemini-2.5-pro',
 ];
