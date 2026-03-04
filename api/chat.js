@@ -584,7 +584,7 @@ export default async function handler(req, res) {
             const sh = { Authorization: 'Bearer ' + slackToken };
             let allMembers = [];
             let cursor = '';
-            for (let page = 0; page < 10; page++) {
+            for (let page = 0; page < 3; page++) {
               const url = 'https://slack.com/api/users.list?limit=200' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : '');
               const r = await fetch(url, { headers: sh });
               const d = await r.json();
@@ -695,7 +695,7 @@ export default async function handler(req, res) {
       }
       return { role: 'user', parts: [{ text: String(m.content || '') }] };
     });
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 4; i++) {
       const reqBody = { contents: currentContents, generationConfig: { maxOutputTokens: 8192 } };
       if (system) reqBody.systemInstruction = { parts: [{ text: system }] };
       if (googleToken || msToken || slackToken) { reqBody.tools = geminiTools; reqBody.tool_config = { function_calling_config: { mode: 'AUTO' } }; }
