@@ -645,7 +645,7 @@ const [driveFiles, setDriveFiles] = useState([]);
         "\nReply in user language. For greetings, give a brief daily briefing using Gmail, Calendar, Slack, and Outlook data." +
         "\nIMPORTANT: Calendar events already include correct day-of-week labels like (æ)(ç«). Always use these labels as-is. Never guess or recalculate day-of-week yourself." +
         "\nFor Outlook calendar operations, use outlook_calendar_create/update/delete tools." +
-        "\nIMPORTANT: When user asks about specific emails or calendar events not shown in the context above, ALWAYS use search tools (outlook_search_mail, outlook_list_events, gmail_search) to dynamically fetch data from the server. NEVER say data is unavailable without trying the search tools first.";
+        "\nIMPORTANT: When user asks about specific emails or calendar events not shown in the context above, ALWAYS use search tools (outlook_search_mail, outlook_list_events, gmail_search) to dynamically fetch data from the server. NEVER say data is unavailable without trying the search tools first." + "\nFor Slack operations: use slack_search_users to find people by name/email, slack_read_dm to read DM history, slack_send_dm to send messages. ALWAYS use slack_search_users when asked to find or search for someone on Slack." + "\nFor Google Drive: use google_drive_search/google_drive_list/google_drive_get_content tools.";
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
