@@ -716,6 +716,8 @@ export default async function handler(req, res) {
         currentContents.push({ role: 'user', parts: rps });
       } else {
         const txt = parts.filter(p => p.text).map(p => p.text).join('');
+        const _dbg = { toolCount: activeTools.length, toolNames: activeTools.map(t=>t.name), model, hasFcs: fcs.length, partsTypes: parts.map(p=>Object.keys(p)) };
+        if (req.query.debug) return res.status(200).json({ content: [{ type: 'text', text: JSON.stringify(_dbg) }] });
         return res.status(200).json({ content: [{ type: 'text', text: txt || '' }] });
       }
     }
