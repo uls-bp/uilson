@@ -679,7 +679,13 @@ export default async function handler(req, res) {
     }
 
     // ===== AI CONVERSATION LOOP (Gemini) =====
-    const geminiTools = [{ functionDeclarations: tools.map(t => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
+    const activeTools = tools.filter(t => {
+      if (t.name.startsWith('gmail_') || t.name.startsWith('calendar_')) return !!googleToken;
+      if (t.name.startsWith('outlook_') || t.name.startsWith('sharepoint_') || t.name.startsWith('teams_')) return !!msToken;
+      if (t.name.startsWith('slack_') || t.name.startsWith('google_drive_')) return !!(slackToken || googleToken);
+      return !!(googleToken || msToken || slackToken);
+    });
+    const geminiTools = [{ functionDeclarations: activeTools.map(t => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
     const currentContents = messages.map(m => {
       if (typeof m.content === 'string') return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
       if (Array.isArray(m.content)) {
