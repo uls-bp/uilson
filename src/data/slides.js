@@ -1,76 +1,44 @@
-export const SLIDES = [
+// Default slides shown before AI generation
+export const DEFAULT_SLIDES = [
   {
     id: 1,
-    title: "2024年度 事業報告",
-    content: "年間売上目標達成、新規顧客数30社、既存顧客の満足度向上"
+    title: "表紙",
+    layout: "cover",
+    layoutLabel: "表紙",
+    heading: "プレゼン資料",
+    sub: "AIで自動生成されたスライド",
+    body: "",
+    note: "UILSON",
+    bg: "#1E2D50",
+    light: true,
+    dataSrc: []
   },
   {
     id: 2,
-    title: "営業実績分析",
-    content: "地域別・商品別の売上推移、トップ営業の事例紹介"
-  },
-  {
-    id: 3,
-    title: "マーケティング戦略",
-    content: "デジタルマーケティング強化、SNS活動の拡大、ブランド認知度向上"
-  },
-  {
-    id: 4,
-    title: "2025年度の重点施策",
-    content: "経営品質の向上、人材育成計画、新規事業展開"
-  },
-  {
-    id: 5,
-    title: "財務数値サマリー",
-    content: "売上120億円、営業利益率12%、資本金増資完了"
-  },
-  {
-    id: 6,
-    title: "まとめと今後の展開",
-    content: "全社一丸となった取り組み、ステークホルダーへの感謝"
+    title: "目次",
+    layout: "content",
+    layoutLabel: "コンテンツ",
+    heading: "目次",
+    sub: "",
+    body: "左のチャットでプレゼンの内容を入力してください。\nAIが自動でスライド構成を生成します。",
+    note: "",
+    bg: "#FFFFFF",
+    light: false,
+    dataSrc: []
   }
 ];
 
 export const MODEL_COLORS = {
-  "Claude": "#D97757",
-  "ChatGPT": "#10A37F",
-  "Gemini": "#4285F4",
-  "Nano Banana": "#F9C80E"
+  claude: "#D97757",
+  chatgpt: "#10A37F",
+  gemini: "#4285F4"
 };
 
-export const MODEL_NAMES = [
-  "Claude",
-  "ChatGPT",
-  "Gemini",
-  "Nano Banana"
-];
-
-export const CREATE_CHAT = [
-  {
-    role: "user",
-    text: "営業チーム向けのプレゼン資料を作ってほしいんだけど、最新の売上データを反映させたいな"
-  },
-  {
-    role: "ai",
-    text: "わかりました。営業チーム向けのプレゼン資料を作成します。最新の売上データ、顧客別実績、地域別分析などを含めるプレゼンを想定しますがいかがでしょうか？"
-  },
-  {
-    role: "user",
-    text: "そうだね。あとスライド数は8枚程度で、2月の成績を目立たせてほしい"
-  },
-  {
-    role: "ai",
-    text: "了解しました。8スライドのプレゼン資料を作成します。2月成績のハイライト、営業チーム別の実績、今後の課題などを含める構成で進めます。では作成を開始しますね。"
-  },
-  {
-    role: "user",
-    text: "お願いします。出来たら確認するから"
-  },
-  {
-    role: "ai",
-    text: "プレゼン資料の作成が完了しました。パワーポイント形式でダウンロード可能です。ご確認をお願いします。"
-  }
-];
+export const MODEL_NAMES = {
+  claude: "Claude",
+  chatgpt: "ChatGPT",
+  gemini: "Gemini"
+};
 
 export const XLSX_CHAT = [
   {
