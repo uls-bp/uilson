@@ -1,4 +1,67 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
+
+function renderMarkdown(text) {
+  if (!text) return text;
+  const lines = text.split("\n");
+  const elements = [];
+  let listItems = [];
+  const flushList = () => {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={`ul-${elements.length}`} style={{ margin: "8px 0", paddingLeft: "20px" }}>
+          {listItems.map((li, i) => (
+            <li key={i} style={{ marginBottom: "4px" }}>{formatInline(li)}</li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+  const formatInline = (str) => {
+    const parts = [];
+    let remaining = str;
+    let key = 0;
+    while (remaining.length > 0) {
+      const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
+      if (boldMatch) {
+        const idx = remaining.indexOf(boldMatch[0]);
+        if (idx > 0) parts.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
+        parts.push(<strong key={key++}>{boldMatch[1]}</strong>);
+        remaining = remaining.slice(idx + boldMatch[0].length);
+      } else {
+        parts.push(<span key={key++}>{remaining}</span>);
+        break;
+      }
+    }
+    return parts;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("### ")) {
+      flushList();
+      elements.push(<div key={i} style={{ fontWeight: "700", fontSize: "13px", color: "#3C5996", margin: "12px 0 4px" }}>{formatInline(line.slice(4))}</div>);
+    } else if (line.startsWith("## ")) {
+      flushList();
+      elements.push(<div key={i} style={{ fontWeight: "700", fontSize: "14px", color: "#2B4070", margin: "14px 0 6px", borderBottom: "1px solid #DDE1EB", paddingBottom: "4px" }}>{formatInline(line.slice(3))}</div>);
+    } else if (line.startsWith("# ")) {
+      flushList();
+      elements.push(<div key={i} style={{ fontWeight: "700", fontSize: "16px", color: "#2B4070", margin: "16px 0 8px" }}>{formatInline(line.slice(2))}</div>);
+    } else if (/^[-•*]\s/.test(line)) {
+      listItems.push(line.replace(/^[-•*]\s/, ""));
+    } else if (/^\d+\.\s/.test(line)) {
+      flushList();
+      elements.push(<div key={i} style={{ margin: "4px 0", paddingLeft: "8px" }}>{formatInline(line)}</div>);
+    } else if (line.trim() === "") {
+      flushList();
+      elements.push(<div key={i} style={{ height: "8px" }} />);
+    } else {
+      flushList();
+      elements.push(<div key={i} style={{ margin: "2px 0" }}>{formatInline(line)}</div>);
+    }
+  }
+  flushList();
+  return elements;
+}
 
 const V = {
   bg: "#F0F2F7",
@@ -47,7 +110,7 @@ export default function ChatView({
   }, [messages, loading]);
 
   const handleQuickAction = (action) => {
-    setInput(action);
+    send(action);
   };
 
   const handleSend = () => {
@@ -380,17 +443,18 @@ export default function ChatView({
 
                 <div
                   style={{
-                    maxWidth: "60%",
-                    padding: "12px 16px",
+                    maxWidth: msg.role === "assistant" ? "75%" : "60%",
+                    padding: msg.role === "assistant" ? "16px 20px" : "12px 16px",
                     borderRadius: "12px",
                     backgroundColor: msg.role === "user" ? V.accent : V.card,
                     color: msg.role === "user" ? V.white : V.t1,
                     fontSize: "14px",
-                    lineHeight: "1.5",
-                    wordBreak: "break-word"
+                    lineHeight: "1.6",
+                    wordBreak: "break-word",
+                    boxShadow: msg.role === "assistant" ? "0 1px 3px rgba(0,0,0,0.06)" : "none"
                   }}
                 >
-                  {msg.content}
+                  {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
                 </div>
               </div>
             ))}

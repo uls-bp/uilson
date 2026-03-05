@@ -327,6 +327,15 @@ export default function Sidebar({
         </div>
       )}
 
+      {/* Legal Links */}
+      {!sbCollapsed && (
+        <div style={{ padding: "4px 20px", display: "flex", gap: "8px", justifyContent: "center" }}>
+          <a href="/privacy.html" target="_blank" rel="noopener" style={{ fontSize: "10px", color: V.t4, textDecoration: "none" }}>プライバシーポリシー</a>
+          <span style={{ fontSize: "10px", color: V.t4 }}>|</span>
+          <a href="/terms.html" target="_blank" rel="noopener" style={{ fontSize: "10px", color: V.t4, textDecoration: "none" }}>利用規約</a>
+        </div>
+      )}
+
       {/* User Area */}
       <div
         style={{
