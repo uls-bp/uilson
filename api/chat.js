@@ -7,7 +7,7 @@ const GEMINI_MODELS = [
 async function callGemini(apiKey, reqBody) {
   for (const model of GEMINI_MODELS) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const resp = await fetch(url, 
+    const resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(reqBody),

@@ -4,7 +4,7 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_REDIRECT = window.location.origin;
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly";
 const SLACK_CLIENT_ID = import.meta.env.VITE_SLACK_CLIENT_ID;
-const SLACK_USER_SCOPES = "channels:read,channels:history,grous:read,groups:history,chat:write,users:read,im:read,im:write,im:history";
+const SLACK_USER_SCOPES = "channels:read,channels:history,groups:read,groups:history,chat:write,users:read,im:read,im:write,im:history";
 const MS_CLIENT_ID = import.meta.env.VITE_MS_CLIENT_ID;
 const MS_SCOPES = "Mail.Read Calendars.ReadWrite User.Read Sites.Read.All Files.Read.All Chat.Read Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All";
 
@@ -28,6 +28,7 @@ export function slackAuthUrl() {
       client_id: SLACK_CLIENT_ID,
       user_scope: SLACK_USER_SCOPES,
       redirect_uri: window.location.origin,
+      state: "slack",
     })
   );
 }
