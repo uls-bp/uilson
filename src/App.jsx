@@ -34,15 +34,27 @@ export default function App() {
       const ctx = await data.getContext();
       const dowNames = ["日", "月", "火", "水", "木", "金", "土"];
       const now = new Date();
+      const connected = [];
+      const disconnected = [];
+      if (auth.token) connected.push("Google (Gmail, Calendar, Drive)");
+      else disconnected.push("Google (Gmail, Calendar, Drive)");
+      if (auth.slackToken) connected.push("Slack");
+      else disconnected.push("Slack");
+      if (auth.msToken) connected.push("Microsoft (Outlook Mail, Outlook Calendar, Teams, SharePoint)");
+      else disconnected.push("Microsoft (Outlook, Teams, SharePoint)");
+      const connStatus = "\n\n## Connected Services: " + (connected.length ? connected.join(", ") : "NONE") +
+        (disconnected.length ? "\n## NOT Connected: " + disconnected.join(", ") : "");
       const systemPrompt =
         "You are UILSON, a professional AI business assistant. Current: " +
         now.toLocaleString("ja-JP") +
         " (" +
         dowNames[now.getDay()] +
         "曜日)" +
+        connStatus +
         "\nUser data:" +
         ctx +
-        "\nReply in user language. For greetings, give a brief daily briefing using Gmail, Calendar, Slack, and Outlook data." +
+        "\nCRITICAL: NEVER fabricate or invent data. Only use REAL data from connected services shown above. If a service is NOT connected, say so and guide the user to connect it via the settings (⚙️) button." +
+        "\nFor greetings/briefings: Only report data from CONNECTED services. If nothing is connected, tell the user to connect services first." +
         "\nIMPORTANT: Calendar events already include correct day-of-week labels. Always use these labels as-is." +
         "\nFor Outlook calendar operations, use outlook_calendar_create/update/delete tools." +
         "\nIMPORTANT: When user asks about specific emails or calendar events not shown in context, ALWAYS use search tools to dynamically fetch data." +
