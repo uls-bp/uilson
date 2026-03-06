@@ -192,7 +192,19 @@ export default async function handler(req, res) {
         description: 'Send a DM (direct message) to a Slack user. IMPORTANT: Only use after user explicitly confirms the message content. First show the draft message and ask for confirmation.',
         input_schema: { type: 'object', properties: { userId: { type: 'string', description: 'Slack user ID' }, text: { type: 'string', description: 'Message text to send' } }, required: ['userId', 'text'] }
       }
-    ,{name:"teams_list_chats",description:"List user's recent Teams chats with last message preview",input_schema:{type:"object",properties:{top:{type:"number",description:"Number of chats (max 50)"}}}},{name:"teams_get_chat_messages",description:"Get messages from a specific Teams chat",input_schema:{type:"object",properties:{chatId:{type:"string",description:"Chat ID"}},required:["chatId"]}},{name:"teams_list_teams_channels",description:"List joined teams and their channels",input_schema:{type:"object",properties:{}}},{name:"teams_get_channel_messages",description:"Get recent messages from a Teams channel",input_schema:{type:"object",properties:{teamId:{type:"string",description:"Team ID"},channelId:{type:"string",description:"Channel ID"}},required:["teamId","channelId"]}},{name:"google_drive_search",description:"Search files in Google Drive",input_schema:{type:"object",properties:{query:{type:"string",description:"Search query"}},required:["query"]}},{name:"google_drive_list",description:"List recent files in Google Drive",input_schema:{type:"object",properties:{pageSize:{type:"number",description:"Number of files (max 100)"},folderId:{type:"string",description:"Folder ID (optional)"}}}},{name:"google_drive_get_content",description:"Get text content of a Google Drive document",input_schema:{type:"object",properties:{fileId:{type:"string",description:"File ID"}},required:["fileId"]}}];
+    ,{name:"teams_list_chats",description:"List user's recent Teams chats with last message preview",input_schema:{type:"object",properties:{top:{type:"number",description:"Number of chats (max 50)"}}}},{name:"teams_get_chat_messages",description:"Get messages from a specific Teams chat",input_schema:{type:"object",properties:{chatId:{type:"string",description:"Chat ID"}},required:["chatId"]}},{name:"teams_list_teams_channels",description:"List joined teams and their channels",input_schema:{type:"object",properties:{}}},{name:"teams_get_channel_messages",description:"Get recent messages from a Teams channel",input_schema:{type:"object",properties:{teamId:{type:"string",description:"Team ID"},channelId:{type:"string",description:"Channel ID"}},required:["teamId","channelId"]}},{name:"google_drive_search",description:"Search files in Google Drive",input_schema:{type:"object",properties:{query:{type:"string",description:"Search query"}},required:["query"]}},{name:"google_drive_list",description:"List recent files in Google Drive",input_schema:{type:"object",properties:{pageSize:{type:"number",description:"Number of files (max 100)"},folderId:{type:"string",description:"Folder ID (optional)"}}}},{name:"google_drive_get_content",description:"Get text content of a Google Drive document",input_schema:{type:"object",properties:{fileId:{type:"string",description:"File ID"}},required:["fileId"]}},
+      // ===== WEATHER & WEB SEARCH TOOLS (always available) =====
+      {
+        name: 'weather_forecast',
+        description: 'Get current weather and forecast for any city/location. Returns temperature, humidity, wind, conditions, and 7-day forecast. Use this whenever user asks about weather, temperature, rain, or forecasts for any location.',
+        input_schema: { type: 'object', properties: { city: { type: 'string', description: 'City name (e.g. "Tokyo", "大阪", "New York")' }, days: { type: 'number', description: 'Forecast days (1-7, default 3)' } }, required: ['city'] }
+      },
+      {
+        name: 'web_search',
+        description: 'Search the web for current information. Use this for any real-time info: news, stock prices, company info, events, general knowledge questions, or anything not already known. Always use this when asked "調べて" (look it up) or for current events/data.',
+        input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Search query in the most relevant language' } }, required: ['query'] }
+      }
+    ];
 
     // ===== TOOL EXECUTION =====
     async function executeTool(name, input, gToken, msTk) {
@@ -673,6 +685,97 @@ export default async function handler(req, res) {
               : { error: 'Failed to send DM: ' + (sendD.error || 'unknown') };
           }
 
+          // ----- Weather (Open-Meteo, no API key needed) -----
+          case 'weather_forecast': {
+            const city = input.city || 'Tokyo';
+            const days = Math.min(input.days || 3, 7);
+            // Geocode city name
+            const geoR = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=ja');
+            const geoD = await geoR.json();
+            if (!geoD.results || geoD.results.length === 0) return { error: '都市が見つかりません: ' + city };
+            const loc = geoD.results[0];
+            const lat = loc.latitude, lon = loc.longitude;
+            const locName = loc.name + (loc.admin1 ? ', ' + loc.admin1 : '') + (loc.country ? ', ' + loc.country : '');
+            // Get weather
+            const wxR = await fetch(
+              'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+              '&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m' +
+              '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset' +
+              '&timezone=Asia%2FTokyo&forecast_days=' + days
+            );
+            const wxD = await wxR.json();
+            if (wxD.error) return { error: wxD.reason || 'Weather API error' };
+            // WMO Weather codes to Japanese
+            const wmoCodes = {0:'快晴',1:'晴れ',2:'一部曇り',3:'曇り',45:'霧',48:'着氷性の霧',51:'弱い霧雨',53:'霧雨',55:'強い霧雨',61:'小雨',63:'雨',65:'大雨',66:'着氷性小雨',67:'着氷性雨',71:'小雪',73:'雪',75:'大雪',77:'霧雪',80:'にわか雨(弱)',81:'にわか雨',82:'にわか雨(激)',85:'にわか雪(弱)',86:'にわか雪(強)',95:'雷雨',96:'雷雨(雹あり)',99:'雷雨(大粒の雹)'};
+            const current = wxD.current;
+            const daily = wxD.daily;
+            const result = {
+              location: locName,
+              current: {
+                temperature: current.temperature_2m + '°C',
+                feelsLike: current.apparent_temperature + '°C',
+                humidity: current.relative_humidity_2m + '%',
+                weather: wmoCodes[current.weather_code] || 'コード' + current.weather_code,
+                wind: current.wind_speed_10m + 'km/h',
+                precipitation: current.precipitation + 'mm'
+              },
+              forecast: []
+            };
+            for (let i = 0; i < (daily.time || []).length; i++) {
+              result.forecast.push({
+                date: daily.time[i],
+                weather: wmoCodes[daily.weather_code[i]] || 'コード' + daily.weather_code[i],
+                maxTemp: daily.temperature_2m_max[i] + '°C',
+                minTemp: daily.temperature_2m_min[i] + '°C',
+                precipitation: daily.precipitation_sum[i] + 'mm',
+                precipProbability: daily.precipitation_probability_max[i] + '%',
+                sunrise: daily.sunrise[i],
+                sunset: daily.sunset[i]
+              });
+            }
+            return result;
+          }
+
+          // ----- Web Search (Google Custom Search or SearXNG) -----
+          case 'web_search': {
+            const query = input.query || '';
+            // Try Google Custom Search if API key available
+            const googleSearchKey = process.env.GOOGLE_SEARCH_API_KEY;
+            const googleSearchCx = process.env.GOOGLE_SEARCH_CX;
+            if (googleSearchKey && googleSearchCx) {
+              const url = 'https://www.googleapis.com/customsearch/v1?key=' + googleSearchKey +
+                '&cx=' + googleSearchCx + '&q=' + encodeURIComponent(query) + '&num=5&lr=lang_ja';
+              const r = await fetch(url);
+              const d = await r.json();
+              if (d.items) {
+                return {
+                  results: d.items.slice(0, 5).map(item => ({
+                    title: item.title,
+                    snippet: item.snippet,
+                    link: item.link
+                  })),
+                  query
+                };
+              }
+            }
+            // Fallback: use DuckDuckGo instant answer API
+            const ddgR = await fetch('https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1');
+            const ddgD = await ddgR.json();
+            const results = [];
+            if (ddgD.Abstract) results.push({ title: ddgD.Heading || query, snippet: ddgD.Abstract, link: ddgD.AbstractURL || '' });
+            if (ddgD.Answer) results.push({ title: 'Direct Answer', snippet: ddgD.Answer, link: '' });
+            if (ddgD.RelatedTopics) {
+              for (const t of ddgD.RelatedTopics.slice(0, 5)) {
+                if (t.Text) results.push({ title: t.Text.substring(0, 80), snippet: t.Text, link: t.FirstURL || '' });
+              }
+            }
+            if (results.length === 0) {
+              // Use Gemini's knowledge as fallback context
+              return { results: [], message: 'Web search returned no results for: ' + query + '. Please answer based on your training knowledge and note the information may not be fully current.' };
+            }
+            return { results, query };
+          }
+
           default: return { error: 'Unknown tool: ' + name };
         }
       } catch (e) { return { error: e.message }; }
@@ -680,6 +783,8 @@ export default async function handler(req, res) {
 
     // ===== AI CONVERSATION LOOP (Gemini) =====
     const activeTools = tools.filter(t => {
+      // Weather and web search are always available (no auth needed)
+      if (t.name === 'weather_forecast' || t.name === 'web_search') return true;
       if (t.name.startsWith('gmail_') || t.name.startsWith('calendar_')) return !!googleToken;
       if (t.name.startsWith('outlook_') || t.name.startsWith('sharepoint_') || t.name.startsWith('teams_')) return !!msToken;
       if (t.name.startsWith('slack_') || t.name.startsWith('google_drive_')) return !!(slackToken || googleToken);
@@ -698,14 +803,14 @@ export default async function handler(req, res) {
     for (let i = 0; i < 4; i++) {
       const reqBody = { contents: currentContents, generationConfig: { maxOutputTokens: 8192 } };
       if (system) reqBody.systemInstruction = { parts: [{ text: system }] };
-      if (googleToken || msToken || slackToken) { reqBody.tools = geminiTools; reqBody.tool_config = { function_calling_config: { mode: 'AUTO' } }; }
+      if (activeTools.length > 0) { reqBody.tools = geminiTools; reqBody.tool_config = { function_calling_config: { mode: 'AUTO' } }; }
       const { data, model } = await callGemini(geminiKey, reqBody);
       if (!data.candidates || !data.candidates[0]) {
         return res.status(200).json({ content: [{ type: 'text', text: data.error ? data.error.message : JSON.stringify(data) }] });
       }
       const parts = data.candidates[0].content.parts || [];
       const fcs = parts.filter(p => p.functionCall);
-      if (fcs.length > 0 && (googleToken || msToken || slackToken)) {
+      if (fcs.length > 0 && activeTools.length > 0) {
         currentContents.push({ role: 'model', parts: parts });
         const rps = [];
         for (const part of fcs) {
