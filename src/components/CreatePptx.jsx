@@ -149,11 +149,107 @@ export default function CreatePptx({ setView }) {
         console.log("bg extraction:", e.message);
       }
 
+      // Extract visual elements (shapes, images, gradients) from slide masters & layouts
+      const EMU_W = 12192000, EMU_H = 6858000;
+      const parseVisuals = async (xmlStr, relsStr, bPath) => {
+        const elems = [];
+        // Shapes with fills
+        const spRx = /<p:sp\b[\s\S]*?<\/p:sp>/g;
+        let m;
+        while ((m = spRx.exec(xmlStr)) !== null) {
+          const sp = m[0];
+          if (sp.includes("<p:ph")) continue; // skip text placeholders
+          const off = sp.match(/<a:off x="(\d+)" y="(\d+)"/);
+          const ex = sp.match(/<a:ext cx="(\d+)" cy="(\d+)"/);
+          if (!off || !ex) continue;
+          const x = parseInt(off[1])/EMU_W*100, y = parseInt(off[2])/EMU_H*100;
+          const w = parseInt(ex[1])/EMU_W*100, h = parseInt(ex[2])/EMU_H*100;
+          if (w < 0.3 && h < 0.3) continue;
+          const fill = sp.match(/<a:solidFill>\s*<a:srgbClr val="([^"]+)"/);
+          if (fill) {
+            const alphaM = sp.match(/<a:solidFill>\s*<a:srgbClr[^>]*>[\s\S]*?<a:alpha val="(\d+)"/);
+            const opacity = alphaM ? parseInt(alphaM[1]) / 100000 : 1;
+            elems.push({ type:"rect", x, y, w, h, fill:`#${fill[1]}`, opacity });
+            continue;
+          }
+          // Gradient fill
+          const gradSection = sp.match(/<a:gradFill>([\s\S]*?)<\/a:gradFill>/);
+          if (gradSection) {
+            const stops = [];
+            const gsRx = /<a:gs pos="(\d+)"[\s\S]*?<a:srgbClr val="([^"]+)"/g;
+            let gs;
+            while ((gs = gsRx.exec(gradSection[1])) !== null) {
+              stops.push({ pos: parseInt(gs[1])/1000, color: `#${gs[2]}` });
+            }
+            if (stops.length >= 2) {
+              const grad = `linear-gradient(180deg, ${stops.map(s=>`${s.color} ${s.pos}%`).join(", ")})`;
+              elems.push({ type:"rect", x, y, w, h, fill: grad, opacity: 1 });
+            }
+          }
+        }
+        // Pictures
+        const picRx = /<p:pic\b[\s\S]*?<\/p:pic>/g;
+        while ((m = picRx.exec(xmlStr)) !== null) {
+          const pic = m[0];
+          const off = pic.match(/<a:off x="(\d+)" y="(\d+)"/);
+          const ex = pic.match(/<a:ext cx="(\d+)" cy="(\d+)"/);
+          const emb = pic.match(/r:embed="([^"]+)"/);
+          if (!off || !ex || !emb || !relsStr) continue;
+          const x = parseInt(off[1])/EMU_W*100, y = parseInt(off[2])/EMU_H*100;
+          const w = parseInt(ex[1])/EMU_W*100, h = parseInt(ex[2])/EMU_H*100;
+          const rId = emb[1];
+          const tgt = relsStr.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
+          if (!tgt) continue;
+          let iP = tgt[1];
+          if (iP.startsWith("../")) iP = "ppt/" + iP.replace(/^\.\.\//g, "");
+          else if (!iP.startsWith("ppt/")) iP = bPath + iP;
+          const iF = zip.file(iP);
+          if (!iF) continue;
+          const iD = await iF.async("base64");
+          const iE = iP.split(".").pop().toLowerCase();
+          const iM = iE==="png"?"image/png":iE==="svg"?"image/svg+xml":"image/jpeg";
+          elems.push({ type:"img", x, y, w, h, src:`data:${iM};base64,${iD}` });
+        }
+        return elems;
+      };
+
+      let coverElements = [], contentElements = [];
+      try {
+        let masterElems = [];
+        const mf = zip.file("ppt/slideMasters/slideMaster1.xml");
+        const mfr = zip.file("ppt/slideMasters/_rels/slideMaster1.xml.rels");
+        if (mf) {
+          const mx = await mf.async("string");
+          const mr2 = mfr ? await mfr.async("string") : null;
+          masterElems = await parseVisuals(mx, mr2, "ppt/slideMasters/");
+        }
+        // Layout 1 = title/cover
+        const l1f = zip.file("ppt/slideLayouts/slideLayout1.xml");
+        const l1r = zip.file("ppt/slideLayouts/_rels/slideLayout1.xml.rels");
+        if (l1f) {
+          const l1x = await l1f.async("string");
+          const l1rels = l1r ? await l1r.async("string") : null;
+          coverElements = [...masterElems, ...await parseVisuals(l1x, l1rels, "ppt/slideLayouts/")];
+        } else coverElements = masterElems;
+        // Layout 2 = content
+        const l2f = zip.file("ppt/slideLayouts/slideLayout2.xml");
+        const l2r = zip.file("ppt/slideLayouts/_rels/slideLayout2.xml.rels");
+        if (l2f) {
+          const l2x = await l2f.async("string");
+          const l2rels = l2r ? await l2r.async("string") : null;
+          contentElements = [...masterElems, ...await parseVisuals(l2x, l2rels, "ppt/slideLayouts/")];
+        } else contentElements = masterElems;
+      } catch (e) {
+        console.log("shape extraction:", e.message);
+      }
+
       setTemplateInfo({
         slideCount: slideFiles.length,
         fonts,
         colors,
         backgrounds,
+        coverElements,
+        contentElements,
       });
     } catch (e) {
       console.log("Template parse optional:", e.message);
@@ -557,7 +653,7 @@ export default function CreatePptx({ setView }) {
               transition: "all 0.2s"
             }}
           >
-            {downloading ? "⏳ 生成中..." : templateFile ? "📥 テンプレ適用DL" : "📥 ダウンロード"}
+            {downloading ? "⏳ 生成中..." : "📥 ダウンロード"}
           </button>
           <button
             onClick={regenerate}
@@ -914,16 +1010,45 @@ export default function CreatePptx({ setView }) {
                     borderRadius: "8px",
                     ...getPreviewBg(slide),
                     border: `1px solid ${V.border}`,
-                    display: "flex", flexDirection: "column",
-                    alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
-                    justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
-                    padding: "28px",
-                    color: getPreviewTextColor(slide),
                     overflow: "hidden",
                     boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
                     position: "relative"
                   }}
                 >
+                  {/* Template visual elements layer (shapes, images, gradients) */}
+                  {templateFile && templateInfo && (() => {
+                    const isCov = slide.layout === "cover" || slide.layout === "closing";
+                    const elms = isCov ? templateInfo.coverElements : templateInfo.contentElements;
+                    if (!elms || elms.length === 0) return null;
+                    return elms.map((el, idx) => {
+                      if (el.type === "rect") return (
+                        <div key={`te${idx}`} style={{
+                          position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
+                          width:`${el.w}%`, height:`${el.h}%`,
+                          background: el.fill, opacity: el.opacity ?? 1,
+                          pointerEvents:"none", zIndex: 0
+                        }} />
+                      );
+                      if (el.type === "img") return (
+                        <img key={`te${idx}`} src={el.src} alt="" style={{
+                          position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
+                          width:`${el.w}%`, height:`${el.h}%`,
+                          objectFit:"contain", pointerEvents:"none", zIndex: 0
+                        }} />
+                      );
+                      return null;
+                    });
+                  })()}
+
+                  {/* Text content layer */}
+                  <div style={{
+                    position: "relative", zIndex: 1,
+                    display: "flex", flexDirection: "column",
+                    alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
+                    justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
+                    padding: "28px", width: "100%", height: "100%",
+                    color: getPreviewTextColor(slide)
+                  }}>
                   {(slide.layout === "cover" || slide.layout === "closing") ? (
                     <>
                       <div style={{
@@ -993,6 +1118,7 @@ export default function CreatePptx({ setView }) {
                       </div>
                     </>
                   )}
+                  </div>{/* close text content layer */}
                 </div>
               </div>
 
