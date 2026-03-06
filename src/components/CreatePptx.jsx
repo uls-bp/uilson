@@ -440,7 +440,7 @@ export default function CreatePptx({ setView }) {
                   if (curSlide !== i) e.currentTarget.style.backgroundColor = V.main;
                 }}
               >
-                <div>{s.id}. {s.heading || s.title}</div>
+                <div style={{ fontWeight: 700 }}>{s.id}. {s.heading || s.title}</div>
                 <div style={{
                   fontSize: "11px",
                   color: curSlide === i ? "rgba(255,255,255,0.7)" : V.t4,
@@ -455,6 +455,36 @@ export default function CreatePptx({ setView }) {
                     marginTop: "2px", fontStyle: "italic"
                   }}>
                     構成のみ（本文未生成）
+                  </div>
+                )}
+                {/* 本文生成後: sub / body テキストを表示 */}
+                {phase === "full" && s.sub && (
+                  <div style={{
+                    fontSize: "11px",
+                    color: curSlide === i ? "rgba(255,255,255,0.8)" : V.t3,
+                    marginTop: "6px", fontWeight: 500
+                  }}>
+                    {s.sub}
+                  </div>
+                )}
+                {phase === "full" && s.body && (
+                  <div style={{
+                    fontSize: "11px", lineHeight: 1.5,
+                    color: curSlide === i ? "rgba(255,255,255,0.7)" : V.t2,
+                    marginTop: "4px", whiteSpace: "pre-wrap",
+                    borderTop: `1px solid ${curSlide === i ? "rgba(255,255,255,0.2)" : V.border}`,
+                    paddingTop: "6px"
+                  }}>
+                    {s.body}
+                  </div>
+                )}
+                {phase === "full" && s.note && (
+                  <div style={{
+                    fontSize: "10px",
+                    color: curSlide === i ? "rgba(255,255,255,0.5)" : V.t4,
+                    marginTop: "4px", fontStyle: "italic"
+                  }}>
+                    💡 {s.note}
                   </div>
                 )}
                 {s.dataSrc && s.dataSrc.length > 0 && (
