@@ -38,20 +38,124 @@ export default function CreatePptx({ setView }) {
     setTemplateFile(file);
     setTemplateName(file.name);
 
-    // Extract template layout info via API
+    // Client-side JSZip parsing for faithful preview
     try {
-      const formData = new FormData();
-      formData.append("template", file);
-      const res = await fetch("/api/parse-template", {
-        method: "POST",
-        body: formData
-      });
-      if (res.ok) {
-        const info = await res.json();
-        setTemplateInfo(info);
+      await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
+      const buf = await file.arrayBuffer();
+      const zip = await window.JSZip.loadAsync(buf);
+
+      // Count slides
+      const slideFiles = Object.keys(zip.files)
+        .filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/))
+        .sort();
+
+      // Extract theme fonts & colors
+      let fonts = { heading: null, body: null };
+      let colors = {};
+      try {
+        const themeFile = zip.file("ppt/theme/theme1.xml");
+        if (themeFile) {
+          const themeXml = await themeFile.async("string");
+          const majorEa = themeXml.match(/<a:majorFont>[\s\S]*?<a:ea\s+typeface="([^"]+)"/);
+          const minorEa = themeXml.match(/<a:minorFont>[\s\S]*?<a:ea\s+typeface="([^"]+)"/);
+          const majorLat = themeXml.match(/<a:majorFont>[\s\S]*?<a:latin\s+typeface="([^"]+)"/);
+          const minorLat = themeXml.match(/<a:minorFont>[\s\S]*?<a:latin\s+typeface="([^"]+)"/);
+          fonts.heading = majorEa?.[1] || majorLat?.[1] || null;
+          fonts.body = minorEa?.[1] || minorLat?.[1] || null;
+
+          const extractColor = (tag) => {
+            const srgb = themeXml.match(new RegExp(`<a:${tag}>[\\s\\S]*?<a:srgbClr val="([^"]+)"`, "i"));
+            if (srgb) return srgb[1];
+            const sys = themeXml.match(new RegExp(`<a:${tag}>[\\s\\S]*?<a:sysClr[^>]*lastClr="([^"]+)"`, "i"));
+            if (sys) return sys[1];
+            return null;
+          };
+          ["dk1","dk2","lt1","lt2","accent1","accent2","accent3","accent4","accent5","accent6","hlink"]
+            .forEach(tag => { colors[tag] = extractColor(tag); });
+        }
+      } catch (e) { /* theme parsing optional */ }
+
+      // Helper: resolve image from relationship
+      const resolveImage = async (xmlContent, relsContent, basePath) => {
+        const bgImg = xmlContent.match(/<p:bg>[\s\S]*?<a:blipFill>[\s\S]*?r:embed="([^"]+)"/);
+        if (!bgImg || !relsContent) return null;
+        const relId = bgImg[1];
+        const target = relsContent.match(new RegExp(`Id="${relId}"[^>]*Target="([^"]+)"`));
+        if (!target) return null;
+        let imgPath = target[1];
+        if (imgPath.startsWith("../")) imgPath = "ppt/" + imgPath.replace("../", "");
+        else if (!imgPath.startsWith("ppt/")) imgPath = basePath + imgPath;
+        const imgFile = zip.file(imgPath);
+        if (!imgFile) return null;
+        const imgBuf = await imgFile.async("base64");
+        const ext = imgPath.split(".").pop().toLowerCase();
+        const mime = ext === "png" ? "image/png" : ext === "svg" ? "image/svg+xml" : "image/jpeg";
+        return `data:${mime};base64,${imgBuf}`;
+      };
+
+      // Extract background images from slide masters, layouts, and actual slides
+      let backgrounds = { cover: null, content: null, coverColor: null, contentColor: null };
+      try {
+        // Slide master background
+        const masterXml = zip.file("ppt/slideMasters/slideMaster1.xml");
+        const masterRels = zip.file("ppt/slideMasters/_rels/slideMaster1.xml.rels");
+        if (masterXml) {
+          const mc = await masterXml.async("string");
+          const mr = masterRels ? await masterRels.async("string") : null;
+          const img = await resolveImage(mc, mr, "ppt/slideMasters/");
+          if (img) backgrounds.content = img;
+          if (!img) {
+            const solid = mc.match(/<p:bg>[\s\S]*?<a:solidFill>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            if (solid) backgrounds.contentColor = solid[1];
+          }
+        }
+
+        // First slide layout (cover)
+        const layout1 = zip.file("ppt/slideLayouts/slideLayout1.xml");
+        const layout1Rels = zip.file("ppt/slideLayouts/_rels/slideLayout1.xml.rels");
+        if (layout1) {
+          const lc = await layout1.async("string");
+          const lr = layout1Rels ? await layout1Rels.async("string") : null;
+          const img = await resolveImage(lc, lr, "ppt/slideLayouts/");
+          if (img) backgrounds.cover = img;
+          if (!img) {
+            const solid = lc.match(/<p:bg>[\s\S]*?<a:solidFill>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            if (solid) backgrounds.coverColor = solid[1];
+          }
+        }
+
+        // Actual slides (first = cover, second = content)
+        for (let i = 0; i < Math.min(slideFiles.length, 2); i++) {
+          const sf = zip.file(slideFiles[i]);
+          const srPath = slideFiles[i].replace("slides/", "slides/_rels/").replace(".xml", ".xml.rels");
+          const sr = zip.file(srPath);
+          if (!sf) continue;
+          const sc = await sf.async("string");
+          const srels = sr ? await sr.async("string") : null;
+          const img = await resolveImage(sc, srels, "ppt/slides/");
+          if (img) {
+            if (i === 0 && !backgrounds.cover) backgrounds.cover = img;
+            else if (i === 1 && !backgrounds.content) backgrounds.content = img;
+          }
+          if (!img) {
+            const solid = sc.match(/<p:bg>[\s\S]*?<a:solidFill>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            if (solid) {
+              if (i === 0 && !backgrounds.cover && !backgrounds.coverColor) backgrounds.coverColor = solid[1];
+              else if (i === 1 && !backgrounds.content && !backgrounds.contentColor) backgrounds.contentColor = solid[1];
+            }
+          }
+        }
+      } catch (e) {
+        console.log("bg extraction:", e.message);
       }
+
+      setTemplateInfo({
+        slideCount: slideFiles.length,
+        fonts,
+        colors,
+        backgrounds,
+      });
     } catch (e) {
-      // Template info extraction is optional, proceed without
       console.log("Template parse optional:", e.message);
     }
   };
