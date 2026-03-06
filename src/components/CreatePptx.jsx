@@ -347,9 +347,18 @@ export default function CreatePptx({ setView }) {
 
   /* ── Load CDN Script Helper ── */
   const loadScript = (src) => new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      // If already loaded and global is available, resolve immediately
+      if (existing.dataset.loaded === "1") return resolve();
+      // If failed before, remove and retry
+      if (existing.dataset.loaded === "0") existing.remove();
+      else return resolve(); // still loading or done
+    }
     const s = document.createElement("script");
-    s.src = src; s.onload = resolve; s.onerror = reject;
+    s.src = src;
+    s.onload = () => { s.dataset.loaded = "1"; resolve(); };
+    s.onerror = () => { s.dataset.loaded = "0"; reject(new Error("Script load failed: " + src)); };
     document.head.appendChild(s);
   });
 
@@ -361,7 +370,7 @@ export default function CreatePptx({ setView }) {
     try {
       if (templateFile) {
         // ── Template-based generation using PptxGenJS + template theme ──
-        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js");
+        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js");
 
         // Use stored buffer (saved during upload) or re-read file
         let templateBuf = templateBufferRef.current;
@@ -487,7 +496,7 @@ export default function CreatePptx({ setView }) {
 
       } else {
         // ── Default: No template, plain PptxGenJS ──
-        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js");
+        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js");
 
         const pptx = new window.PptxGenJS();
         pptx.defineLayout({ name: "WIDE", width: 13.33, height: 7.5 });
