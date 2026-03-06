@@ -447,7 +447,7 @@ export default function CreatePptx({ setView }) {
             }
           } else {
             // Accent line under heading
-            pptSlide.addShape(pptx.ShapeType.rect, {
+            pptSlide.addShape("rect", {
               x: 0.5, y: 1.25, w: 1.5, h: 0.04, fill: { color: accentColor }
             });
             pptSlide.addText(s.heading || s.title, {
@@ -539,7 +539,8 @@ export default function CreatePptx({ setView }) {
         await pptx.writeFile({ fileName: "UILSON_presentation.pptx" });
       }
     } catch (err) {
-      alert("ダウンロードエラー: " + err.message);
+      console.error("Download error:", err);
+      alert("ダウンロードエラー: " + (err?.message || String(err)));
     }
     setDownloading(false);
   };
