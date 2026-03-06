@@ -18,11 +18,60 @@ export default function CreatePptx({ setView }) {
   const [generated, setGenerated] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const [templateFile, setTemplateFile] = useState(null);
+  const [templateName, setTemplateName] = useState("");
+  const [templateInfo, setTemplateInfo] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
+
+  /* ── Template Upload Handlers ── */
+  const handleTemplateUpload = async (file) => {
+    if (!file || !file.name.match(/\.pptx$/i)) {
+      alert("PPTXファイルを選択してください");
+      return;
+    }
+    setTemplateFile(file);
+    setTemplateName(file.name);
+
+    // Extract template layout info via API
+    try {
+      const formData = new FormData();
+      formData.append("template", file);
+      const res = await fetch("/api/parse-template", {
+        method: "POST",
+        body: formData
+      });
+      if (res.ok) {
+        const info = await res.json();
+        setTemplateInfo(info);
+      }
+    } catch (e) {
+      // Template info extraction is optional, proceed without
+      console.log("Template parse optional:", e.message);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleTemplateUpload(file);
+  };
+
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
+  const handleDragLeave = () => setDragOver(false);
+
+  const removeTemplate = () => {
+    setTemplateFile(null);
+    setTemplateName("");
+    setTemplateInfo(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const sendChat = async () => {
     const text = chatInput.trim();
@@ -93,78 +142,202 @@ export default function CreatePptx({ setView }) {
     setGenerating(false);
   };
 
+  /* ── Load CDN Script Helper ── */
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const s = document.createElement("script");
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+
+  /* ── Download: Template-based or PptxGenJS ── */
   const downloadPptx = async () => {
     if (downloading || !generated || slides.length < 2) return;
     setDownloading(true);
 
     try {
-      if (!window.PptxGenJS) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          script.src = "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js";
-          script.onload = resolve;
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-      }
+      if (templateFile) {
+        // ── Template-based generation using JSZip + template manipulation ──
+        await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
+        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js");
 
-      const pptx = new window.PptxGenJS();
-      pptx.defineLayout({ name: "WIDE", width: 13.33, height: 7.5 });
-      pptx.layout = "WIDE";
+        // Read template as ArrayBuffer
+        const templateBuf = await templateFile.arrayBuffer();
+        const zip = await window.JSZip.loadAsync(templateBuf);
 
-      for (const s of slides) {
-        const pptSlide = pptx.addSlide();
-        const bgColor = (s.bg || "#FFFFFF").replace("#", "");
-        pptSlide.background = { color: bgColor };
-        const textColor = s.light ? "FFFFFF" : "333333";
-        const subColor = s.light ? "CCCCCC" : "888888";
+        // Count existing slides in template
+        const slideFiles = Object.keys(zip.files).filter(
+          f => f.match(/^ppt\/slides\/slide\d+\.xml$/)
+        ).sort();
+        const templateSlideCount = slideFiles.length;
 
-        if (s.layout === "cover" || s.layout === "closing") {
-          pptSlide.addText(s.heading || s.title, {
-            x: 0.5, y: 2.0, w: 12.33, h: 1.5,
-            fontSize: 36, fontFace: "Yu Gothic",
-            color: textColor, bold: true, align: "center"
-          });
-          if (s.sub) {
-            pptSlide.addText(s.sub, {
-              x: 0.5, y: 3.8, w: 12.33, h: 0.8,
-              fontSize: 18, fontFace: "Yu Gothic",
-              color: subColor, align: "center"
-            });
+        // Strategy: Use PptxGenJS but apply template's theme colors & fonts
+        // by extracting theme info from the template
+        let themeColors = null;
+        let themeFonts = { heading: "Yu Gothic", body: "Yu Gothic" };
+        try {
+          const themeFile = zip.file("ppt/theme/theme1.xml");
+          if (themeFile) {
+            const themeXml = await themeFile.async("string");
+            // Extract major/minor font
+            const majorMatch = themeXml.match(/<a:majorFont>[\s\S]*?<a:ea\s+typeface="([^"]+)"/);
+            const minorMatch = themeXml.match(/<a:minorFont>[\s\S]*?<a:ea\s+typeface="([^"]+)"/);
+            if (majorMatch) themeFonts.heading = majorMatch[1];
+            if (minorMatch) themeFonts.body = minorMatch[1];
+
+            // Extract scheme colors
+            const dk1 = themeXml.match(/<a:dk1>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            const dk2 = themeXml.match(/<a:dk2>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            const lt1 = themeXml.match(/<a:lt1>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            const accent1 = themeXml.match(/<a:accent1>[\s\S]*?<a:srgbClr val="([^"]+)"/);
+            themeColors = {
+              dk1: dk1?.[1] || "1E2D50",
+              dk2: dk2?.[1] || "2B4070",
+              lt1: lt1?.[1] || "FFFFFF",
+              accent1: accent1?.[1] || "3C5996"
+            };
           }
-          if (s.note) {
-            pptSlide.addText(s.note, {
-              x: 9, y: 6.5, w: 4, h: 0.5,
-              fontSize: 10, fontFace: "Yu Gothic",
-              color: subColor, align: "right"
-            });
+        } catch (e) { /* theme extraction optional */ }
+
+        // Generate new PPTX using theme from template
+        const pptx = new window.PptxGenJS();
+        pptx.defineLayout({ name: "WIDE", width: 13.33, height: 7.5 });
+        pptx.layout = "WIDE";
+
+        const headingFont = themeFonts.heading;
+        const bodyFont = themeFonts.body;
+        const coverBg = themeColors ? themeColors.dk1 : "1E2D50";
+        const closingBg = themeColors ? themeColors.dk2 : "2B4070";
+        const accentColor = themeColors ? themeColors.accent1 : "3C5996";
+
+        for (const s of slides) {
+          const pptSlide = pptx.addSlide();
+          const isCoverClose = s.layout === "cover" || s.layout === "closing";
+
+          let bgColor;
+          if (isCoverClose) {
+            bgColor = s.layout === "cover" ? coverBg : closingBg;
+          } else {
+            bgColor = (s.bg || "#FFFFFF").replace("#", "");
           }
-        } else {
-          pptSlide.addText(s.heading || s.title, {
-            x: 0.5, y: 0.3, w: 12.33, h: 1.0,
-            fontSize: 28, fontFace: "Yu Gothic",
-            color: textColor, bold: true
-          });
-          if (s.sub) {
-            pptSlide.addText(s.sub, {
-              x: 0.5, y: 1.3, w: 12.33, h: 0.6,
-              fontSize: 14, fontFace: "Yu Gothic",
-              color: subColor
+          pptSlide.background = { color: bgColor };
+
+          const textColor = (isCoverClose || s.light) ? "FFFFFF" : "333333";
+          const subColor = (isCoverClose || s.light) ? "CCCCCC" : "888888";
+
+          if (isCoverClose) {
+            pptSlide.addText(s.heading || s.title, {
+              x: 0.5, y: 2.0, w: 12.33, h: 1.5,
+              fontSize: 36, fontFace: headingFont,
+              color: textColor, bold: true, align: "center"
             });
-          }
-          if (s.body) {
-            const bodyY = s.sub ? 2.1 : 1.5;
-            pptSlide.addText(s.body, {
-              x: 0.5, y: bodyY, w: 12.33, h: 4.5,
-              fontSize: 16, fontFace: "Yu Gothic",
-              color: textColor, lineSpacingMultiple: 1.5,
-              valign: "top"
+            if (s.sub) {
+              pptSlide.addText(s.sub, {
+                x: 0.5, y: 3.8, w: 12.33, h: 0.8,
+                fontSize: 18, fontFace: bodyFont,
+                color: subColor, align: "center"
+              });
+            }
+            if (s.note) {
+              pptSlide.addText(s.note, {
+                x: 9, y: 6.5, w: 4, h: 0.5,
+                fontSize: 10, fontFace: bodyFont,
+                color: subColor, align: "right"
+              });
+            }
+          } else {
+            // Accent line under heading
+            pptSlide.addShape(pptx.ShapeType.rect, {
+              x: 0.5, y: 1.25, w: 1.5, h: 0.04, fill: { color: accentColor }
             });
+            pptSlide.addText(s.heading || s.title, {
+              x: 0.5, y: 0.3, w: 12.33, h: 1.0,
+              fontSize: 28, fontFace: headingFont,
+              color: textColor, bold: true
+            });
+            if (s.sub) {
+              pptSlide.addText(s.sub, {
+                x: 0.5, y: 1.4, w: 12.33, h: 0.6,
+                fontSize: 14, fontFace: bodyFont,
+                color: subColor
+              });
+            }
+            if (s.body) {
+              const bodyY = s.sub ? 2.2 : 1.6;
+              pptSlide.addText(s.body, {
+                x: 0.5, y: bodyY, w: 12.33, h: 4.5,
+                fontSize: 16, fontFace: bodyFont,
+                color: textColor, lineSpacingMultiple: 1.5,
+                valign: "top"
+              });
+            }
           }
         }
-      }
 
-      await pptx.writeFile({ fileName: "UILSON_presentation.pptx" });
+        await pptx.writeFile({ fileName: "UILSON_presentation.pptx" });
+
+      } else {
+        // ── Default: No template, plain PptxGenJS ──
+        await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js");
+
+        const pptx = new window.PptxGenJS();
+        pptx.defineLayout({ name: "WIDE", width: 13.33, height: 7.5 });
+        pptx.layout = "WIDE";
+
+        for (const s of slides) {
+          const pptSlide = pptx.addSlide();
+          const bgColor = (s.bg || "#FFFFFF").replace("#", "");
+          pptSlide.background = { color: bgColor };
+          const textColor = s.light ? "FFFFFF" : "333333";
+          const subColor = s.light ? "CCCCCC" : "888888";
+
+          if (s.layout === "cover" || s.layout === "closing") {
+            pptSlide.addText(s.heading || s.title, {
+              x: 0.5, y: 2.0, w: 12.33, h: 1.5,
+              fontSize: 36, fontFace: "Yu Gothic",
+              color: textColor, bold: true, align: "center"
+            });
+            if (s.sub) {
+              pptSlide.addText(s.sub, {
+                x: 0.5, y: 3.8, w: 12.33, h: 0.8,
+                fontSize: 18, fontFace: "Yu Gothic",
+                color: subColor, align: "center"
+              });
+            }
+            if (s.note) {
+              pptSlide.addText(s.note, {
+                x: 9, y: 6.5, w: 4, h: 0.5,
+                fontSize: 10, fontFace: "Yu Gothic",
+                color: subColor, align: "right"
+              });
+            }
+          } else {
+            pptSlide.addText(s.heading || s.title, {
+              x: 0.5, y: 0.3, w: 12.33, h: 1.0,
+              fontSize: 28, fontFace: "Yu Gothic",
+              color: textColor, bold: true
+            });
+            if (s.sub) {
+              pptSlide.addText(s.sub, {
+                x: 0.5, y: 1.3, w: 12.33, h: 0.6,
+                fontSize: 14, fontFace: "Yu Gothic",
+                color: subColor
+              });
+            }
+            if (s.body) {
+              const bodyY = s.sub ? 2.1 : 1.5;
+              pptSlide.addText(s.body, {
+                x: 0.5, y: bodyY, w: 12.33, h: 4.5,
+                fontSize: 16, fontFace: "Yu Gothic",
+                color: textColor, lineSpacingMultiple: 1.5,
+                valign: "top"
+              });
+            }
+          }
+        }
+
+        await pptx.writeFile({ fileName: "UILSON_presentation.pptx" });
+      }
     } catch (err) {
       alert("ダウンロードエラー: " + err.message);
     }
@@ -232,7 +405,7 @@ export default function CreatePptx({ setView }) {
               transition: "all 0.2s"
             }}
           >
-            {downloading ? "⏳ 生成中..." : "📥 ダウンロード"}
+            {downloading ? "⏳ 生成中..." : templateFile ? "📥 テンプレ適用DL" : "📥 ダウンロード"}
           </button>
           <button
             onClick={regenerate}
@@ -268,6 +441,81 @@ export default function CreatePptx({ setView }) {
             fontSize: "12px", fontWeight: 600, color: V.t3
           }}>
             💬 チャット
+          </div>
+
+          {/* ── Template Upload Area ── */}
+          <div style={{
+            padding: "10px 12px",
+            borderBottom: `1px solid ${V.border}`,
+            background: templateFile ? `${V.green}08` : V.main
+          }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pptx"
+              style={{ display: "none" }}
+              onChange={e => { if (e.target.files?.[0]) handleTemplateUpload(e.target.files[0]); }}
+            />
+            {!templateFile ? (
+              <div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: `2px dashed ${dragOver ? V.accent : V.border2}`,
+                  borderRadius: "8px",
+                  padding: "12px",
+                  textAlign: "center",
+                  cursor: "pointer",
+                  background: dragOver ? `${V.accent}08` : "transparent",
+                  transition: "all 0.2s"
+                }}
+              >
+                <div style={{ fontSize: "20px", marginBottom: "4px", opacity: 0.5 }}>📎</div>
+                <div style={{ fontSize: "11px", color: V.t3, lineHeight: 1.5 }}>
+                  テンプレート (.pptx) をドラッグ&ドロップ<br/>
+                  またはクリックして選択
+                </div>
+                <div style={{ fontSize: "10px", color: V.t4, marginTop: "4px" }}>
+                  テンプレなしでもOK
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                display: "flex", alignItems: "center", gap: "8px",
+                background: V.white, borderRadius: "8px", padding: "8px 12px",
+                border: `1px solid ${V.green}40`
+              }}>
+                <span style={{ fontSize: "18px" }}>📊</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: "11px", fontWeight: 600, color: V.t1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+                  }}>
+                    {templateName}
+                  </div>
+                  <div style={{ fontSize: "10px", color: V.green }}>
+                    テンプレート適用中
+                    {templateInfo?.slideCount && ` · ${templateInfo.slideCount}枚`}
+                    {templateInfo?.fonts?.heading && ` · ${templateInfo.fonts.heading}`}
+                  </div>
+                </div>
+                <button
+                  onClick={removeTemplate}
+                  style={{
+                    border: "none", background: "none", cursor: "pointer",
+                    fontSize: "14px", color: V.t4, padding: "2px 4px",
+                    borderRadius: "4px"
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.color = V.red}
+                  onMouseLeave={e => e.currentTarget.style.color = V.t4}
+                  title="テンプレートを削除"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
 
           <div style={{
