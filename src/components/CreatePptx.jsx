@@ -346,6 +346,54 @@ export default function CreatePptx({ setView }) {
 
   const slide = slides[curSlide] || slides[0];
 
+  /* ── Template theme helpers for preview ── */
+  const tColors = templateInfo?.colors || {};
+  const tFonts = templateInfo?.fonts || {};
+  const tBgs = templateInfo?.backgrounds || {};
+
+  // Derive preview colors from template theme
+  const tmCoverBg = tBgs.coverColor ? `#${tBgs.coverColor}` : tColors.dk1 ? `#${tColors.dk1}` : null;
+  const tmContentBg = tBgs.contentColor ? `#${tBgs.contentColor}` : tColors.lt1 ? `#${tColors.lt1}` : null;
+  const tmAccent = tColors.accent1 ? `#${tColors.accent1}` : null;
+  const tmTextDark = tColors.dk1 ? `#${tColors.dk1}` : null;
+  const tmTextLight = tColors.lt1 ? `#${tColors.lt1}` : "#FFFFFF";
+  const tmSubDark = tColors.dk2 ? `#${tColors.dk2}` : null;
+  const tmHeadingFont = tFonts.heading || null;
+  const tmBodyFont = tFonts.body || null;
+
+  // Get bg style for a slide depending on template
+  const getPreviewBg = (s) => {
+    const isCoverClose = s.layout === "cover" || s.layout === "closing";
+    if (templateFile && isCoverClose) {
+      if (tBgs.cover) return { backgroundImage: `url(${tBgs.cover})`, backgroundSize: "cover", backgroundPosition: "center" };
+      if (tmCoverBg) return { background: tmCoverBg };
+    }
+    if (templateFile && !isCoverClose) {
+      if (tBgs.content) return { backgroundImage: `url(${tBgs.content})`, backgroundSize: "cover", backgroundPosition: "center" };
+      if (tmContentBg) return { background: tmContentBg };
+    }
+    return { background: s.bg || "#FFFFFF" };
+  };
+
+  // Get text color for preview
+  const getPreviewTextColor = (s) => {
+    const isCoverClose = s.layout === "cover" || s.layout === "closing";
+    if (templateFile) {
+      if (isCoverClose || s.light) return tmTextLight || "#FFFFFF";
+      return tmTextDark || V.t1;
+    }
+    return s.light ? V.white : V.t1;
+  };
+
+  const getPreviewSubColor = (s) => {
+    const isCoverClose = s.layout === "cover" || s.layout === "closing";
+    if (templateFile) {
+      if (isCoverClose || s.light) return "rgba(255,255,255,0.7)";
+      return tmSubDark || V.t3;
+    }
+    return s.light ? "rgba(255,255,255,0.8)" : V.t3;
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: V.main }}>
       {/* Top Bar */}
@@ -621,10 +669,10 @@ export default function CreatePptx({ setView }) {
                 onClick={() => { setCurSlide(i); if (previewing) setPreviewing(true); }}
                 style={{
                   padding: "14px", borderRadius: "6px",
-                  background: curSlide === i ? `${V.accent}08` : V.main,
+                  background: curSlide === i ? `${templateFile && tmAccent ? tmAccent : V.accent}10` : V.main,
                   cursor: "pointer", marginBottom: "10px",
                   fontSize: "12px",
-                  border: `1px solid ${curSlide === i ? V.accent : V.border}`,
+                  border: `1px solid ${curSlide === i ? (templateFile && tmAccent ? tmAccent : V.accent) : V.border}`,
                   transition: "all 0.2s"
                 }}
               >
@@ -665,6 +713,27 @@ export default function CreatePptx({ setView }) {
                 {s.dataSrc && s.dataSrc.length > 0 && (
                   <div style={{ fontSize: "10px", color: V.t4, marginTop: "4px" }}>
                     📊 {s.dataSrc.join(", ")}
+                  </div>
+                )}
+                {/* Mini color preview strip for template */}
+                {templateFile && tColors.accent1 && (
+                  <div style={{
+                    display: "flex", gap: "3px", marginTop: "8px",
+                    paddingTop: "6px", borderTop: `1px solid ${V.border}`
+                  }}>
+                    {(s.layout === "cover" || s.layout === "closing") ? (
+                      <div style={{
+                        flex: 1, height: "4px", borderRadius: "2px",
+                        background: tmCoverBg || `#${tColors.dk1 || "1E2D50"}`
+                      }} />
+                    ) : (
+                      <>
+                        <div style={{ flex: 2, height: "4px", borderRadius: "2px",
+                          background: tmContentBg || "#FFFFFF", border: `1px solid ${V.border}` }} />
+                        <div style={{ flex: 1, height: "4px", borderRadius: "2px",
+                          background: tmAccent || V.accent }} />
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -728,7 +797,7 @@ export default function CreatePptx({ setView }) {
               </div>
             </div>
           ) : (
-            /* Slide preview */
+            /* Slide preview - template-aware */
             <>
               <div style={{
                 flex: 1, overflow: "auto", padding: "20px",
@@ -739,13 +808,13 @@ export default function CreatePptx({ setView }) {
                     width: "100%", maxWidth: "520px",
                     aspectRatio: "16 / 9",
                     borderRadius: "8px",
-                    background: slide.bg || "#FFFFFF",
+                    ...getPreviewBg(slide),
                     border: `1px solid ${V.border}`,
                     display: "flex", flexDirection: "column",
                     alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
                     justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
                     padding: "28px",
-                    color: slide.light ? V.white : V.t1,
+                    color: getPreviewTextColor(slide),
                     overflow: "hidden",
                     boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
                     position: "relative"
@@ -755,19 +824,26 @@ export default function CreatePptx({ setView }) {
                     <>
                       <div style={{
                         fontSize: "28px", fontWeight: 800,
-                        textAlign: "center", lineHeight: 1.3, marginBottom: "16px"
+                        textAlign: "center", lineHeight: 1.3, marginBottom: "16px",
+                        fontFamily: tmHeadingFont || "inherit",
+                        color: getPreviewTextColor(slide)
                       }}>
                         {slide.heading || slide.title}
                       </div>
                       {slide.sub && (
-                        <div style={{ fontSize: "13px", textAlign: "center", opacity: 0.9 }}>
+                        <div style={{
+                          fontSize: "13px", textAlign: "center",
+                          color: getPreviewSubColor(slide),
+                          fontFamily: tmBodyFont || "inherit"
+                        }}>
                           {slide.sub}
                         </div>
                       )}
                       {slide.note && (
                         <div style={{
                           position: "absolute", bottom: "16px", right: "20px",
-                          fontSize: "10px", opacity: 0.7
+                          fontSize: "10px", opacity: 0.7,
+                          fontFamily: tmBodyFont || "inherit"
                         }}>
                           {slide.note}
                         </div>
@@ -775,14 +851,28 @@ export default function CreatePptx({ setView }) {
                     </>
                   ) : (
                     <>
-                      <div style={{ fontSize: "22px", fontWeight: 800, marginBottom: "10px" }}>
+                      {/* Accent bar under heading (matches download output) */}
+                      {templateFile && tmAccent && (
+                        <div style={{
+                          width: "60px", height: "3px",
+                          background: tmAccent,
+                          borderRadius: "2px",
+                          marginBottom: "8px"
+                        }} />
+                      )}
+                      <div style={{
+                        fontSize: "22px", fontWeight: 800, marginBottom: "10px",
+                        fontFamily: tmHeadingFont || "inherit",
+                        color: getPreviewTextColor(slide)
+                      }}>
                         {slide.heading || slide.title}
                       </div>
                       {slide.sub && (
                         <div style={{
                           fontSize: "12px",
-                          color: slide.light ? "rgba(255,255,255,0.8)" : V.t3,
-                          marginBottom: "12px", fontWeight: 500
+                          color: getPreviewSubColor(slide),
+                          marginBottom: "12px", fontWeight: 500,
+                          fontFamily: tmBodyFont || "inherit"
                         }}>
                           {slide.sub}
                         </div>
@@ -790,8 +880,10 @@ export default function CreatePptx({ setView }) {
                       <div style={{
                         fontSize: "11px", lineHeight: 1.6,
                         whiteSpace: "pre-wrap",
+                        color: getPreviewTextColor(slide),
                         opacity: slide.light ? 0.9 : 1,
-                        overflow: "auto", flex: 1, width: "100%"
+                        overflow: "auto", flex: 1, width: "100%",
+                        fontFamily: tmBodyFont || "inherit"
                       }}>
                         {slide.body}
                       </div>
@@ -804,9 +896,19 @@ export default function CreatePptx({ setView }) {
                 padding: "10px 16px",
                 borderTop: `1px solid ${V.border}`,
                 background: V.white,
-                fontSize: "11px", color: V.t4
+                fontSize: "11px", color: V.t4,
+                display: "flex", justifyContent: "space-between", alignItems: "center"
               }}>
-                <strong>{slide.heading || slide.title}</strong> — {slide.layoutLabel || slide.layout}
+                <span><strong>{slide.heading || slide.title}</strong> — {slide.layoutLabel || slide.layout}</span>
+                {templateFile && (
+                  <span style={{
+                    fontSize: "10px", padding: "2px 8px",
+                    background: `${V.green}15`, color: V.green,
+                    borderRadius: "4px", fontWeight: 600
+                  }}>
+                    テンプレ適用
+                  </span>
+                )}
               </div>
             </>
           )}
