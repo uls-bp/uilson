@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
-// Runtime client ID (fetched from server to bypass Vercel build cache)
-let _runtimeGoogleClientId = "";
-// Fallback to build-time env var
-const GOOGLE_CLIENT_ID_FALLBACK = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+// Hardcoded UILSON project OAuth client ID (project #1061433368940)
+// This bypasses Vercel env var issues on the old deployment
+const GOOGLE_CLIENT_ID = "1061433368940-efg0dtq7j5linpfbimcnlu14b8da92ht.apps.googleusercontent.com";
 const GOOGLE_REDIRECT = window.location.origin;
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly";
 const SLACK_CLIENT_ID = import.meta.env.VITE_SLACK_CLIENT_ID;
@@ -11,31 +10,14 @@ const SLACK_USER_SCOPES = "channels:read,channels:history,groups:read,groups:his
 const MS_CLIENT_ID = import.meta.env.VITE_MS_CLIENT_ID;
 const MS_SCOPES = "Mail.Read Calendars.ReadWrite User.Read Sites.Read.All Files.Read.All Chat.Read Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All";
 
-// Fetch the runtime client ID from server on startup
-fetch("/api/chat", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ action: "get-config" }),
-})
-  .then((r) => r.json())
-  .then((data) => {
-    if (data.clientId) _runtimeGoogleClientId = data.clientId;
-  })
-  .catch(() => {});
-
-function getGoogleClientId() {
-  return _runtimeGoogleClientId || GOOGLE_CLIENT_ID_FALLBACK;
-}
-
-// Authorization Code flow (gets refresh token for persistent sessions)
+// Implicit flow: returns access_token directly in URL hash (no client_secret needed)
 export function googleAuthUrl(loginHint, forceConsent = false) {
   const params = {
-    client_id: getGoogleClientId(),
+    client_id: GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT,
-    response_type: "code",
+    response_type: "token",
     scope: SCOPES,
-    access_type: "offline",
-    prompt: forceConsent ? "consent" : "consent",
+    prompt: forceConsent ? "consent" : "select_account",
     state: "google",
   };
   if (loginHint) params.login_hint = loginHint;
@@ -77,72 +59,14 @@ export default function useAuth() {
   const [msToken, setMsToken] = useState(localStorage.getItem("ms_token") || "");
   const [msEmail, setMsEmail] = useState(localStorage.getItem("ms_email") || "");
 
-  // Refresh Google token using refresh_token
-  const refreshGoogleToken = useCallback(async () => {
-    const refreshToken = localStorage.getItem("g_refresh_token");
-    if (!refreshToken) return false;
-
-    try {
-      const resp = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "google-refresh",
-          refresh_token: refreshToken,
-        }),
-      }).then((r) => r.json());
-
-      if (resp.ok && resp.access_token) {
-        localStorage.setItem("g_token", resp.access_token);
-        setToken(resp.access_token);
-        if (resp.expires_in) {
-          const expiryTime = Date.now() + parseInt(resp.expires_in) * 1000;
-          localStorage.setItem("g_token_expiry", expiryTime.toString());
-        }
-        return true;
-      }
-    } catch (e) {
-      console.error("Google token refresh failed:", e);
-    }
-    return false;
-  }, []);
-
-  // Google OAuth callback handler (Authorization Code flow)
+  // Handle OAuth callbacks (MS and Slack use auth code flow via server)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
 
-    // Handle Google auth code
-    if (code && state === "google") {
-      fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "google-oauth",
-          code,
-          redirect_uri: window.location.origin,
-        }),
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.ok && data.access_token) {
-            localStorage.setItem("g_token", data.access_token);
-            setToken(data.access_token);
-            if (data.refresh_token) {
-              localStorage.setItem("g_refresh_token", data.refresh_token);
-            }
-            if (data.expires_in) {
-              const expiryTime = Date.now() + parseInt(data.expires_in) * 1000;
-              localStorage.setItem("g_token_expiry", expiryTime.toString());
-            }
-            window.history.replaceState({}, "", window.location.pathname);
-          }
-        })
-        .catch(console.error);
-    }
     // Handle MS auth code
-    else if (code && state === "ms") {
+    if (code && state === "ms") {
       fetch(
         "/api/ms-oauth?code=" +
           code +
@@ -177,26 +101,30 @@ export default function useAuth() {
     }
   }, []);
 
-  // Legacy: handle old implicit flow hash fragments (for backward compat)
+  // Google OAuth implicit flow: token comes back in URL hash fragment
   useEffect(() => {
     const hash = window.location.hash;
     if (hash.includes("access_token")) {
       const hashParams = new URLSearchParams(hash.substring(1));
-      const t = hashParams.get("access_token");
-      const expiresIn = hashParams.get("expires_in");
-      if (t) {
-        localStorage.setItem("g_token", t);
-        setToken(t);
-        if (expiresIn) {
-          const expiryTime = Date.now() + parseInt(expiresIn) * 1000;
-          localStorage.setItem("g_token_expiry", expiryTime.toString());
+      const state = hashParams.get("state");
+      // Only process if it's a Google auth callback (or no state for backward compat)
+      if (state === "google" || !state || state === "") {
+        const t = hashParams.get("access_token");
+        const expiresIn = hashParams.get("expires_in");
+        if (t) {
+          localStorage.setItem("g_token", t);
+          setToken(t);
+          if (expiresIn) {
+            const expiryTime = Date.now() + parseInt(expiresIn) * 1000;
+            localStorage.setItem("g_token_expiry", expiryTime.toString());
+          }
+          window.history.replaceState(null, "", window.location.pathname);
         }
-        window.history.replaceState(null, "", window.location.pathname);
       }
     }
   }, []);
 
-  // Auto-refresh token before expiry using refresh_token
+  // Auto-clear expired Google token (implicit flow has no refresh tokens)
   useEffect(() => {
     if (!token) return;
 
@@ -205,33 +133,29 @@ export default function useAuth() {
 
     const expiry = parseInt(expiryStr);
     const now = Date.now();
-    const refreshTime = expiry - 5 * 60 * 1000; // 5 minutes before expiry
 
     if (now >= expiry) {
-      // Token already expired, refresh now
-      refreshGoogleToken();
+      // Token already expired, clear it
+      localStorage.removeItem("g_token");
+      localStorage.removeItem("g_token_expiry");
+      setToken("");
       return;
     }
 
-    if (now >= refreshTime) {
-      // Close to expiry, refresh now
-      refreshGoogleToken();
-      return;
-    }
-
-    // Schedule refresh
+    // Schedule token clear at expiry
     const timer = setTimeout(() => {
-      refreshGoogleToken();
-    }, refreshTime - now);
+      localStorage.removeItem("g_token");
+      localStorage.removeItem("g_token_expiry");
+      setToken("");
+    }, expiry - now);
 
     return () => clearTimeout(timer);
-  }, [token, refreshGoogleToken]);
+  }, [token]);
 
   const logout = () => {
     localStorage.removeItem("g_token");
     localStorage.removeItem("g_email");
     localStorage.removeItem("g_token_expiry");
-    localStorage.removeItem("g_refresh_token");
     setToken("");
     setGoogleEmail("");
   };
