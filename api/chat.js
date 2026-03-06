@@ -689,9 +689,17 @@ export default async function handler(req, res) {
           case 'weather_forecast': {
             const city = input.city || 'Tokyo';
             const days = Math.min(input.days || 3, 7);
-            // Geocode city name
-            const geoR = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=ja');
-            const geoD = await geoR.json();
+            // Common Japanese city name -> English mapping for geocoding
+            const cityMap = {'東京':'Tokyo','大阪':'Osaka','名古屋':'Nagoya','京都':'Kyoto','福岡':'Fukuoka','札幌':'Sapporo','仙台':'Sendai','広島':'Hiroshima','横浜':'Yokohama','神戸':'Kobe','北九州':'Kitakyushu','千葉':'Chiba','さいたま':'Saitama','新潟':'Niigata','浜松':'Hamamatsu','静岡':'Shizuoka','岡山':'Okayama','熊本':'Kumamoto','鹿児島':'Kagoshima','那覇':'Naha','金沢':'Kanazawa','長崎':'Nagasaki','松山':'Matsuyama','高松':'Takamatsu','大分':'Oita','宮崎':'Miyazaki','富山':'Toyama','長野':'Nagano','岐阜':'Gifu','奈良':'Nara','和歌山':'Wakayama','滋賀':'Shiga','盛岡':'Morioka','秋田':'Akita','山形':'Yamagata','福島':'Fukushima','水戸':'Mito','宇都宮':'Utsunomiya','前橋':'Maebashi','甲府':'Kofu','福井':'Fukui','津':'Tsu','徳島':'Tokushima','高知':'Kochi','佐賀':'Saga','青森':'Aomori','山口':'Yamaguchi','松江':'Matsue','鳥取':'Tottori'};
+            const searchCity = cityMap[city] || city;
+            // Geocode city name - try with language=ja first, then fallback to English name
+            let geoR = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(searchCity) + '&count=3&language=ja');
+            let geoD = await geoR.json();
+            if ((!geoD.results || geoD.results.length === 0) && searchCity === city) {
+              // Try English name if Japanese didn't work
+              geoR = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=3&language=en');
+              geoD = await geoR.json();
+            }
             if (!geoD.results || geoD.results.length === 0) return { error: '都市が見つかりません: ' + city };
             const loc = geoD.results[0];
             const lat = loc.latitude, lon = loc.longitude;
