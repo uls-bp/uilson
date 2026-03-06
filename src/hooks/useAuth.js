@@ -131,8 +131,8 @@ export default function useAuth() {
           }
         });
     }
-    // Handle Slack auth code (no state or unrecognized state)
-    else if (code && !state) {
+    // Handle Slack auth code
+    else if (code && (state === "slack" || !state)) {
       fetch(
         "/api/slack-oauth?code=" +
           code +
