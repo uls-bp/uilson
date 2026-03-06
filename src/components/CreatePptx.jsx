@@ -24,6 +24,7 @@ export default function CreatePptx({ setView }) {
   const [dragOver, setDragOver] = useState(false);
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const templateBufferRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -42,6 +43,7 @@ export default function CreatePptx({ setView }) {
     try {
       await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
       const buf = await file.arrayBuffer();
+      templateBufferRef.current = buf; // preserve for download
       const zip = await window.JSZip.loadAsync(buf);
 
       // Count slides
@@ -270,6 +272,7 @@ export default function CreatePptx({ setView }) {
     setTemplateFile(null);
     setTemplateName("");
     setTemplateInfo(null);
+    templateBufferRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -357,13 +360,19 @@ export default function CreatePptx({ setView }) {
 
     try {
       if (templateFile) {
-        // ── Template-based generation using JSZip + template manipulation ──
-        await loadScript("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js");
+        // ── Template-based generation using PptxGenJS + template theme ──
         await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgenjs.bundle.js");
 
-        // Read template as ArrayBuffer
-        const templateBuf = await templateFile.arrayBuffer();
-        const zip = await window.JSZip.loadAsync(templateBuf);
+        // Use stored buffer (saved during upload) or re-read file
+        let templateBuf = templateBufferRef.current;
+        if (!templateBuf) {
+          templateBuf = await templateFile.arrayBuffer();
+          templateBufferRef.current = templateBuf;
+        }
+        // JSZip might come from PptxGenJS bundle or standalone
+        const JSZipLib = window.JSZip;
+        if (!JSZipLib) throw new Error("JSZip not available");
+        const zip = await JSZipLib.loadAsync(templateBuf);
 
         // Count existing slides in template
         const slideFiles = Object.keys(zip.files).filter(
@@ -1019,35 +1028,35 @@ export default function CreatePptx({ setView }) {
                   {/* Template visual elements layer (shapes, images, gradients) */}
                   {templateFile && templateInfo && (() => {
                     const isCov = slide.layout === "cover" || slide.layout === "closing";
-                    const elms = isCov ? templateInfo.coverElements : templateInfo.contentElements;
-                    if (!elms || elms.length === 0) return null;
+                    const elms = isCov ? (templateInfo.coverElements || []) : (templateInfo.contentElements || []);
                     return elms.map((el, idx) => {
                       if (el.type === "rect") return (
                         <div key={`te${idx}`} style={{
                           position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
                           width:`${el.w}%`, height:`${el.h}%`,
                           background: el.fill, opacity: el.opacity ?? 1,
-                          pointerEvents:"none", zIndex: 0
+                          pointerEvents:"none", zIndex: 1
                         }} />
                       );
                       if (el.type === "img") return (
                         <img key={`te${idx}`} src={el.src} alt="" style={{
                           position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
                           width:`${el.w}%`, height:`${el.h}%`,
-                          objectFit:"contain", pointerEvents:"none", zIndex: 0
+                          objectFit:"contain", pointerEvents:"none", zIndex: 1
                         }} />
                       );
                       return null;
                     });
                   })()}
 
-                  {/* Text content layer */}
+                  {/* Text content layer - absolute overlay */}
                   <div style={{
-                    position: "relative", zIndex: 1,
+                    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                    zIndex: 2,
                     display: "flex", flexDirection: "column",
                     alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
                     justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
-                    padding: "28px", width: "100%", height: "100%",
+                    padding: "28px",
                     color: getPreviewTextColor(slide)
                   }}>
                   {(slide.layout === "cover" || slide.layout === "closing") ? (
