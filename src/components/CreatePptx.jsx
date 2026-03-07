@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { DEFAULT_SLIDES, MODEL_COLORS, MODEL_NAMES } from "../data/slides";
+import { DEFAULT_SLIDES, MODEL_COLORS, MODEL_NAMES, LAYOUT_ICONS, CREATE_CHAT, DEFAULT_SOURCES, AI_ORCHESTRATION_STATUS } from "../data/slides";
 
 const V = {
   bg:"#F0F2F7", sb:"#FFFFFF", main:"#F5F6FA", card:"#FFFFFF", border:"#DDE1EB",
@@ -11,17 +11,23 @@ const V = {
 export default function CreatePptx({ setView }) {
   const [slides, setSlides] = useState(DEFAULT_SLIDES);
   const [curSlide, setCurSlide] = useState(0);
-  const [chatMessages, setChatMessages] = useState([]);
+  const [chatMessages, setChatMessages] = useState(
+    CREATE_CHAT.map(m => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.text }))
+  );
   const [chatInput, setChatInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [generated, setGenerated] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
+  const [generated, setGenerated] = useState(true);
   const [isComposing, setIsComposing] = useState(false);
   const [templateFile, setTemplateFile] = useState(null);
   const [templateName, setTemplateName] = useState("");
   const [templateInfo, setTemplateInfo] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  /* New state for mockup features */
+  const [sources, setSources] = useState(DEFAULT_SOURCES);
+  const [showSourceAdd, setShowSourceAdd] = useState(false);
+  const [curModel, setCurModel] = useState("chatgpt");
+  const [aiStatus] = useState(AI_ORCHESTRATION_STATUS);
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const templateBufferRef = useRef(null);
@@ -423,7 +429,7 @@ export default function CreatePptx({ setView }) {
       const res = await fetch("/api/generate-slides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages, mode: "full" })
+        body: JSON.stringify({ messages: newMessages, mode: "full", model: curModel })
       });
       const data = await res.json();
 
@@ -433,11 +439,10 @@ export default function CreatePptx({ setView }) {
         setSlides(data.slides);
         setCurSlide(0);
         setGenerated(true);
-        setPreviewing(false);
         const summary = data.summary || `${data.slides.length}枚のスライドを生成しました。`;
         setChatMessages(prev => [...prev, {
           role: "assistant",
-          content: `${summary}\n\n構成パネルで各スライドの本文を確認してください。\n修正はチャットで指示できます。\n内容OKなら「PPTプレビュー」で確認できます。`
+          content: `${summary}\n\n構成パネルで各スライドの本文を確認してください。\n修正はチャットで指示できます。`
         }]);
       } else if (data.rawText) {
         setChatMessages(prev => [...prev, { role: "assistant", content: data.rawText }]);
@@ -458,7 +463,7 @@ export default function CreatePptx({ setView }) {
       const res = await fetch("/api/generate-slides", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: regenMessages, mode: "full" })
+        body: JSON.stringify({ messages: regenMessages, mode: "full", model: curModel })
       });
       const data = await res.json();
 
@@ -466,7 +471,6 @@ export default function CreatePptx({ setView }) {
         setSlides(data.slides);
         setCurSlide(0);
         setGenerated(true);
-        setPreviewing(false);
         setChatMessages(prev => [...prev, {
           role: "assistant",
           content: `再生成しました（${data.slides.length}枚）。構成パネルで確認してください。`
@@ -476,6 +480,71 @@ export default function CreatePptx({ setView }) {
       setChatMessages(prev => [...prev, { role: "assistant", content: "再生成エラー: " + err.message }]);
     }
     setGenerating(false);
+  };
+
+  /* ── Source Management ── */
+  const addSource = (type) => {
+    setShowSourceAdd(false);
+    if (type === "upload") {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".pptx,.pdf,.docx,.xlsx,.txt";
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const newSrc = { id: Date.now(), name: file.name, type: "file", icon: "📄" };
+          setSources(prev => [...prev, newSrc]);
+          if (file.name.match(/\.pptx$/i)) handleTemplateUpload(file);
+        }
+      };
+      input.click();
+    } else {
+      const labels = { drive: "Google Drive", sp: "SharePoint", skill: "スキルBOX" };
+      alert(`${labels[type]} からの選択は今後実装予定です`);
+    }
+  };
+
+  const removeSource = (id) => {
+    setSources(prev => prev.filter(s => s.id !== id));
+  };
+
+  /* ── Slide Management ── */
+  const moveSlide = (index, direction) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= slides.length) return;
+    const newSlides = [...slides];
+    const temp = newSlides[index];
+    newSlides[index] = newSlides[newIndex];
+    newSlides[newIndex] = temp;
+    setSlides(newSlides);
+    setCurSlide(newIndex);
+  };
+
+  const deleteSlide = (index) => {
+    if (slides.length <= 1) return;
+    const newSlides = slides.filter((_, i) => i !== index);
+    setSlides(newSlides);
+    if (curSlide >= newSlides.length) setCurSlide(newSlides.length - 1);
+    else if (curSlide > index) setCurSlide(curSlide - 1);
+  };
+
+  const addSlide = () => {
+    const newSlide = {
+      id: Date.now(),
+      title: "新しいスライド",
+      layout: "body",
+      layoutLabel: "コンテンツ",
+      heading: "新しいスライド",
+      sub: "",
+      body: "内容を入力してください。",
+      note: "",
+      bg: "#FFFFFF",
+      light: false,
+      ai: [],
+      dataSrc: []
+    };
+    setSlides(prev => [...prev, newSlide]);
+    setCurSlide(slides.length);
   };
 
   /* ── Load CDN Script Helper ── */
@@ -497,7 +566,7 @@ export default function CreatePptx({ setView }) {
 
   /* ── Download: Template-based or PptxGenJS ── */
   const downloadPptx = async () => {
-    if (downloading || !generated || slides.length < 2) return;
+    if (downloading || !generated || slides.length < 1) return;
     setDownloading(true);
 
     try {
@@ -746,489 +815,521 @@ export default function CreatePptx({ setView }) {
     return s.light ? "rgba(255,255,255,0.8)" : V.t3;
   };
 
+  const modelIcon = { claude: "\ud83d\udfe3", gemini: "\ud83d\udd35", chatgpt: "\ud83d\udfe2" };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: V.main }}>
       {/* Top Bar */}
       <div style={{
-        padding: "16px 24px",
+        padding: "10px 24px",
         borderBottom: `1px solid ${V.border}`,
         background: V.white,
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
+        gap: "10px",
         boxShadow: "0 1px 3px rgba(0,0,0,0.08)"
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1 }}>
-          <button
-            onClick={() => setView("create-menu")}
-            style={{
-              padding: "8px 14px", borderRadius: 6,
-              border: `1px solid ${V.border}`, background: V.white,
-              cursor: "pointer", fontSize: 14, color: V.t2, fontWeight: 500,
-              transition: "all 0.2s"
-            }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = V.main}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = V.white}
-          >
-            ← 作るメニュー
-          </button>
-          <h1 style={{ fontSize: "18px", fontWeight: 700, color: V.t1, margin: 0 }}>
-            📊 プレゼン資料を作る
-          </h1>
+        <div
+          onClick={() => setView("create-menu")}
+          style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            cursor: "pointer", color: V.accent, fontSize: "13px", fontWeight: 600
+          }}
+        >
+          {"\u2190 \u4f5c\u308b\u30e1\u30cb\u30e5\u30fc"}
+        </div>
+        <div style={{ width: "1px", height: "24px", background: V.border, margin: "0 10px" }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "16px", fontWeight: 700, color: V.t1 }}>{"\ud83d\udcca \u30d7\u30ec\u30bc\u30f3\u8cc7\u6599\u3092\u4f5c\u308b"}</div>
+          <div style={{ fontSize: "12px", color: V.t3 }}>{"\u793e\u5185\u30c7\u30fc\u30bf\u3068\u30ce\u30a6\u30cf\u30a6\u3092\u6d3b\u7528\u3057\u3066\u3001\u597d\u307f\u306eAI\u3067\u30d7\u30ec\u30bc\u30f3\u3092\u751f\u6210"}</div>
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          {templateName && (
+            <span style={{ fontSize: "12px", color: V.t3, display: "flex", alignItems: "center", gap: "4px" }}>
+              {"\ud83d\udce6"} {"\u9069\u7528\u4e2d\uff1a"}<strong style={{ color: V.accent }}>{templateName.replace(/\.pptx$/i, "")}</strong>
+            </span>
+          )}
           <button
-            onClick={() => setPreviewing(true)}
-            disabled={!generated}
+            onClick={downloadPptx}
+            disabled={downloading || !generated}
             style={{
-              padding: "8px 16px", borderRadius: 6,
+              padding: "6px 16px", borderRadius: 6,
               border: `1px solid ${generated ? V.accent : V.border}`,
-              background: !generated ? V.main : previewing ? `${V.accent}15` : V.white,
-              cursor: !generated ? "not-allowed" : "pointer",
+              background: V.white,
+              cursor: (!generated || downloading) ? "not-allowed" : "pointer",
               fontSize: 13, color: generated ? V.accent : V.t4, fontWeight: 600,
               opacity: !generated ? 0.5 : 1,
               transition: "all 0.2s"
             }}
           >
-            👁️ PPTプレビュー
-          </button>
-          <button
-            onClick={downloadPptx}
-            disabled={downloading || !generated}
-            style={{
-              padding: "8px 16px", borderRadius: 6,
-              border: `1px solid ${generated ? V.green : V.border}`,
-              background: !generated ? V.main : `${V.green}10`,
-              cursor: (!generated || downloading) ? "not-allowed" : "pointer",
-              fontSize: 13, color: generated ? V.green : V.t4, fontWeight: 600,
-              opacity: !generated ? 0.5 : 1,
-              transition: "all 0.2s"
-            }}
-          >
-            {downloading ? "⏳ 生成中..." : "📥 ダウンロード"}
+            {downloading ? "\u23f3 \u751f\u6210\u4e2d..." : "\ud83d\udce5 PPTX\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9"}
           </button>
           <button
             onClick={regenerate}
             disabled={generating || chatMessages.length === 0}
             style={{
-              padding: "8px 16px", borderRadius: 6,
-              border: `1px solid ${V.border}`,
-              background: generating ? V.main : V.white,
+              padding: "6px 16px", borderRadius: 6,
+              border: "none",
+              background: generating ? V.t4 : V.accent,
+              color: V.white,
               cursor: generating ? "wait" : "pointer",
-              fontSize: 13, color: V.t2, fontWeight: 500,
+              fontSize: 13, fontWeight: 600,
               opacity: chatMessages.length === 0 ? 0.5 : 1,
               transition: "all 0.2s"
             }}
           >
-            🔄 再生成
+            {"\ud83d\udd04 \u518d\u751f\u6210"}
           </button>
         </div>
       </div>
 
       {/* Main Content - 3 Panels */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", gap: 0 }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-        {/* Left: Chat (30%) */}
+        {/* Left: AI Dialogue (30%) */}
         <div style={{
-          flex: "0 0 30%",
-          borderRight: `1px solid ${V.border}`,
+          width: "30%", borderRight: `1px solid ${V.border}`,
           display: "flex", flexDirection: "column",
-          background: V.card, overflow: "hidden"
+          background: V.sb, overflow: "hidden"
         }}>
+          {/* Source Area */}
           <div style={{
-            padding: "12px 16px",
-            borderBottom: `1px solid ${V.border}`,
-            fontSize: "12px", fontWeight: 600, color: V.t3
+            padding: "10px 14px", borderBottom: `1px solid ${V.border}`, background: V.main
           }}>
-            💬 チャット
-          </div>
-
-          {/* ── Template Upload Area ── */}
-          <div style={{
-            padding: "10px 12px",
-            borderBottom: `1px solid ${V.border}`,
-            background: templateFile ? `${V.green}08` : V.main
-          }}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pptx"
-              style={{ display: "none" }}
-              onChange={e => { if (e.target.files?.[0]) handleTemplateUpload(e.target.files[0]); }}
-            />
-            {!templateFile ? (
-              <div
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onClick={() => fileInputRef.current?.click()}
-                style={{
-                  border: `2px dashed ${dragOver ? V.accent : V.border2}`,
-                  borderRadius: "8px",
-                  padding: "12px",
-                  textAlign: "center",
-                  cursor: "pointer",
-                  background: dragOver ? `${V.accent}08` : "transparent",
-                  transition: "all 0.2s"
-                }}
+            <div style={{ display: "flex", alignItems: "center", marginBottom: "8px" }}>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: V.t1 }}>{"\ud83d\udcce \u30bd\u30fc\u30b9"}</span>
+              <span
+                onClick={() => setShowSourceAdd(!showSourceAdd)}
+                style={{ marginLeft: "auto", fontSize: "12px", color: V.accent, cursor: "pointer", fontWeight: 600 }}
               >
-                <div style={{ fontSize: "20px", marginBottom: "4px", opacity: 0.5 }}>📎</div>
-                <div style={{ fontSize: "11px", color: V.t3, lineHeight: 1.5 }}>
-                  テンプレート (.pptx) をドラッグ&ドロップ<br/>
-                  またはクリックして選択
-                </div>
-                <div style={{ fontSize: "10px", color: V.t4, marginTop: "4px" }}>
-                  テンプレなしでもOK
-                </div>
-              </div>
-            ) : (
+                {"\uff0b \u8ffd\u52a0"}
+              </span>
+            </div>
+            {showSourceAdd && (
               <div style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                background: V.white, borderRadius: "8px", padding: "8px 12px",
-                border: `1px solid ${V.green}40`
+                background: V.white, border: `1px solid ${V.border}`, borderRadius: "8px",
+                padding: "8px", marginBottom: "8px"
               }}>
-                <span style={{ fontSize: "18px" }}>📊</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: "11px", fontWeight: 600, color: V.t1,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-                  }}>
-                    {templateName}
+                {[
+                  { key: "upload", icon: "\u2b06\ufe0f", label: "\u30d5\u30a1\u30a4\u30eb\u3092\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9" },
+                  { key: "drive", icon: "\ud83d\udcc2", label: "Google Drive \u304b\u3089\u9078\u3076" },
+                  { key: "sp", icon: "\ud83d\udcc2", label: "SharePoint \u304b\u3089\u9078\u3076" },
+                  { key: "skill", icon: "\ud83d\udce6", label: "\u30b9\u30ad\u30ebBOX\u304b\u3089\u9078\u3076" }
+                ].map(item => (
+                  <div
+                    key={item.key}
+                    onClick={() => addSource(item.key)}
+                    style={{
+                      padding: "6px 8px", fontSize: "12px", color: V.t2,
+                      cursor: "pointer", borderRadius: "5px",
+                      display: "flex", alignItems: "center", gap: "6px"
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(60,89,150,0.05)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    {item.icon} {item.label}
                   </div>
-                  <div style={{ fontSize: "10px", color: V.green }}>
-                    テンプレート適用中
-                    {templateInfo?.slideCount && ` · ${templateInfo.slideCount}枚`}
-                    {templateInfo?.fonts?.heading && ` · ${templateInfo.fonts.heading}`}
-                  </div>
-                </div>
-                <button
-                  onClick={removeTemplate}
-                  style={{
-                    border: "none", background: "none", cursor: "pointer",
-                    fontSize: "14px", color: V.t4, padding: "2px 4px",
-                    borderRadius: "4px"
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.color = V.red}
-                  onMouseLeave={e => e.currentTarget.style.color = V.t4}
-                  title="テンプレートを削除"
-                >
-                  ✕
-                </button>
+                ))}
               </div>
             )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              {sources.map(src => (
+                <div key={src.id} style={{
+                  display: "flex", alignItems: "center", gap: "6px", padding: "4px 8px",
+                  background: V.white, borderRadius: "6px", border: `1px solid ${V.border}`,
+                  fontSize: "12px", color: V.t2
+                }}>
+                  <span>{src.icon}</span>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{src.name}</span>
+                  <span
+                    onClick={() => removeSource(src.id)}
+                    style={{ cursor: "pointer", color: V.t4, fontSize: "11px" }}
+                    onMouseEnter={e => e.currentTarget.style.color = V.red}
+                    onMouseLeave={e => e.currentTarget.style.color = V.t4}
+                  >{"\u2715"}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
+          {/* Chat Header with Model Selector */}
+          <div style={{
+            padding: "8px 14px", borderBottom: `1px solid ${V.border}`,
+            display: "flex", alignItems: "center", gap: "8px"
+          }}>
+            <span style={{ fontSize: "14px", fontWeight: 600, color: V.accent }}>{"\ud83d\udcac \u5bfe\u8a71"}</span>
+            <div style={{ marginLeft: "auto" }}>
+              <select
+                value={curModel}
+                onChange={e => setCurModel(e.target.value)}
+                style={{
+                  background: V.main, border: `1px solid ${V.border}`, color: V.t2,
+                  padding: "4px 8px", borderRadius: "6px", fontSize: "12px",
+                  fontFamily: "inherit", cursor: "pointer", outline: "none"
+                }}
+              >
+                <option value="claude">{"\ud83d\udfe3 Claude"}</option>
+                <option value="gemini">{"\ud83d\udd35 Gemini"}</option>
+                <option value="chatgpt">{"\ud83d\udfe2 ChatGPT"}</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Chat Messages */}
           <div style={{
             flex: 1, overflowY: "auto", padding: "12px",
-            display: "flex", flexDirection: "column", gap: "8px"
+            display: "flex", flexDirection: "column", gap: "10px"
           }}>
             {chatMessages.length === 0 && (
               <div style={{
                 padding: "20px", textAlign: "center", color: V.t4, fontSize: "12px",
                 lineHeight: 1.6
               }}>
-                プレゼン資料の内容を入力してください。<br/>
-                例: 「営業チーム向けの月次報告を8枚で作って」<br/>
-                例: 「新製品発表のプレゼンを作って」
+                {"\u30d7\u30ec\u30bc\u30f3\u8cc7\u6599\u306e\u5185\u5bb9\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"}<br/>
+                {"\u4f8b: \u300c\u55b6\u696d\u30c1\u30fc\u30e0\u5411\u3051\u306e\u6708\u6b21\u5831\u544a\u30928\u679a\u3067\u4f5c\u3063\u3066\u300d"}
               </div>
             )}
             {chatMessages.map((msg, i) => (
-              <div
-                key={i}
-                style={{
-                  padding: "10px", borderRadius: "8px",
-                  background: msg.role === "user" ? V.accent : V.main,
-                  color: msg.role === "user" ? V.white : V.t2,
-                  fontSize: "12px", lineHeight: 1.5,
-                  whiteSpace: "pre-wrap", wordBreak: "break-word"
-                }}
-              >
-                {msg.content}
-              </div>
+              msg.role === "user" ? (
+                <div key={i} style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{
+                    maxWidth: "85%",
+                    background: `linear-gradient(135deg,${V.accent},${V.teal})`,
+                    borderRadius: "12px 12px 4px 12px",
+                    padding: "9px 12px", fontSize: "13px", lineHeight: 1.6, color: "#FFF",
+                    whiteSpace: "pre-wrap", wordBreak: "break-word"
+                  }}>
+                    {msg.content}
+                  </div>
+                </div>
+              ) : (
+                <div key={i} style={{ display: "flex", gap: "7px" }}>
+                  <div style={{
+                    width: "24px", height: "24px", borderRadius: "6px",
+                    background: MODEL_COLORS[curModel] || V.accent,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "11px", fontWeight: 800, color: "#FFF", flexShrink: 0
+                  }}>
+                    {(MODEL_NAMES[curModel] || "AI")[0]}
+                  </div>
+                  <div style={{
+                    background: V.main, borderRadius: "4px 12px 12px 12px",
+                    padding: "9px 12px", border: `1px solid ${V.border}`,
+                    fontSize: "13px", lineHeight: 1.6, color: V.t1, maxWidth: "88%",
+                    whiteSpace: "pre-wrap", wordBreak: "break-word"
+                  }}>
+                    <div style={{
+                      fontSize: "10px", color: MODEL_COLORS[curModel] || V.accent,
+                      fontWeight: 600, marginBottom: "3px"
+                    }}>
+                      {modelIcon[curModel] || "\ud83d\udfe3"} {MODEL_NAMES[curModel] || "AI"}
+                    </div>
+                    {msg.content}
+                  </div>
+                </div>
+              )
             ))}
+            {/* AI Orchestration Status */}
+            {generated && aiStatus.length > 0 && (
+              <div style={{
+                background: "rgba(60,89,150,0.04)", border: "1px solid rgba(60,89,150,0.12)",
+                borderRadius: "8px", padding: "10px", marginTop: "4px"
+              }}>
+                <div style={{ fontSize: "11px", fontWeight: 600, color: V.accent, marginBottom: "6px" }}>
+                  {"\ud83d\udd00 AI\u30aa\u30fc\u30b1\u30b9\u30c8\u30ec\u30fc\u30b7\u30e7\u30f3\u72b6\u6cc1"}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {aiStatus.map((st, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px" }}>
+                      <span style={{ color: MODEL_COLORS[st.model] }}>{st.icon}</span>
+                      <span style={{ color: V.t2 }}>{MODEL_NAMES[st.model]}</span>
+                      <span style={{ color: V.t4 }}>{"\u2192"} {st.task}</span>
+                      <span style={{ color: V.green, marginLeft: "auto" }}>
+                        {st.status === "done" ? "\u2713 \u5b8c\u4e86" : "\u23f3 \u51e6\u7406\u4e2d"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {generating && (
               <div style={{
                 padding: "10px", borderRadius: "8px",
                 background: V.main, color: V.t3,
                 fontSize: "12px", fontStyle: "italic"
               }}>
-                🤖 スライドを生成中...
+                {"\ud83e\udd16 \u30b9\u30e9\u30a4\u30c9\u3092\u751f\u6210\u4e2d..."}
               </div>
             )}
             <div ref={chatEndRef} />
           </div>
 
-          <div style={{
-            padding: "12px", borderTop: `1px solid ${V.border}`,
-            display: "flex", gap: "8px"
-          }}>
-            <input
-              type="text"
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={() => setIsComposing(false)}
-              onKeyDown={e => {
-                if (e.key === "Enter" && !e.shiftKey && !isComposing && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  sendChat();
-                }
-              }}
-              placeholder="プレゼンの内容を入力..."
-              disabled={generating}
-              style={{
-                flex: 1, padding: "8px 12px", borderRadius: "6px",
-                border: `1px solid ${V.border}`, fontSize: "12px",
-                backgroundColor: V.white
-              }}
-            />
-            <button
-              onClick={sendChat}
-              disabled={generating || !chatInput.trim()}
-              style={{
-                padding: "8px 12px", borderRadius: "6px",
-                border: "none", background: generating ? V.t4 : V.accent,
-                color: V.white, cursor: generating ? "wait" : "pointer",
-                fontSize: "12px", fontWeight: 600, transition: "all 0.2s"
-              }}
-            >
-              送信 →
-            </button>
-          </div>
-        </div>
-
-        {/* Center: Composition / Text Review (35%) */}
-        <div style={{
-          flex: "0 0 35%",
-          borderRight: `1px solid ${V.border}`,
-          display: "flex", flexDirection: "column",
-          background: V.white, overflow: "hidden"
-        }}>
-          <div style={{
-            padding: "12px 16px",
-            borderBottom: `1px solid ${V.border}`,
-            fontSize: "12px", fontWeight: 600, color: V.t3,
-            display: "flex", justifyContent: "space-between", alignItems: "center"
-          }}>
-            <span>📑 構成・本文確認</span>
-            <span style={{ fontSize: "11px", color: V.t4 }}>{slides.length}枚</span>
-          </div>
-
-          <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
-            {slides.map((s, i) => (
-              <div
-                key={s.id}
-                onClick={() => { setCurSlide(i); if (previewing) setPreviewing(true); }}
+          {/* Chat Input */}
+          <div style={{ padding: "10px 12px", borderTop: `1px solid ${V.border}` }}>
+            <div style={{
+              display: "flex", gap: "6px", alignItems: "center",
+              background: V.main, borderRadius: "8px", padding: "4px 4px 4px 12px",
+              border: `1px solid ${V.border}`
+            }}>
+              <input
+                type="text"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={() => setIsComposing(false)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey && !isComposing && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    sendChat();
+                  }
+                }}
+                placeholder={"\u6307\u793a\u3084\u4fee\u6b63\u3092\u5165\u529b..."}
+                disabled={generating}
                 style={{
-                  padding: "14px", borderRadius: "6px",
-                  background: curSlide === i ? `${templateFile && tmAccent ? tmAccent : V.accent}10` : V.main,
-                  cursor: "pointer", marginBottom: "10px",
-                  fontSize: "12px",
-                  border: `1px solid ${curSlide === i ? (templateFile && tmAccent ? tmAccent : V.accent) : V.border}`,
-                  transition: "all 0.2s"
+                  flex: 1, border: "none", outline: "none", background: "transparent",
+                  color: V.t2, fontSize: "13px", fontFamily: "inherit"
+                }}
+              />
+              <button
+                onClick={sendChat}
+                disabled={generating || !chatInput.trim()}
+                style={{
+                  padding: "5px 12px", borderRadius: "6px",
+                  border: "none", background: generating ? V.t4 : V.accent,
+                  color: V.white, cursor: generating ? "wait" : "pointer",
+                  fontSize: "12px", fontWeight: 600, transition: "all 0.2s"
                 }}
               >
-                <div style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                  marginBottom: "6px"
-                }}>
-                  <span style={{ fontWeight: 700, color: V.t1 }}>
-                    {s.id}. {s.heading || s.title}
-                  </span>
-                  <span style={{
-                    fontSize: "10px", padding: "2px 8px", borderRadius: "10px",
-                    background: V.border, color: V.t3
-                  }}>
-                    {s.layoutLabel || s.layout}
-                  </span>
-                </div>
-                {s.sub && (
-                  <div style={{ fontSize: "12px", color: V.t2, marginBottom: "6px", fontWeight: 500 }}>
-                    {s.sub}
-                  </div>
-                )}
-                {s.body && (
-                  <div style={{
-                    fontSize: "12px", lineHeight: 1.6, color: V.t2,
-                    whiteSpace: "pre-wrap",
-                    borderTop: `1px solid ${V.border}`,
-                    paddingTop: "8px", marginTop: "4px"
-                  }}>
-                    {s.body}
-                  </div>
-                )}
-                {s.note && (
-                  <div style={{ fontSize: "11px", color: V.t4, marginTop: "6px", fontStyle: "italic" }}>
-                    💡 {s.note}
-                  </div>
-                )}
-                {s.dataSrc && s.dataSrc.length > 0 && (
-                  <div style={{ fontSize: "10px", color: V.t4, marginTop: "4px" }}>
-                    📊 {s.dataSrc.join(", ")}
-                  </div>
-                )}
-                {/* Mini color preview strip for template */}
-                {templateFile && tColors.accent1 && (
-                  <div style={{
-                    display: "flex", gap: "3px", marginTop: "8px",
-                    paddingTop: "6px", borderTop: `1px solid ${V.border}`
-                  }}>
-                    {(s.layout === "cover" || s.layout === "closing") ? (
-                      <div style={{
-                        flex: 1, height: "4px", borderRadius: "2px",
-                        background: tmCoverBg || `#${tColors.dk1 || "1E2D50"}`
-                      }} />
-                    ) : (
-                      <>
-                        <div style={{ flex: 2, height: "4px", borderRadius: "2px",
-                          background: tmContentBg || "#FFFFFF", border: `1px solid ${V.border}` }} />
-                        <div style={{ flex: 1, height: "4px", borderRadius: "2px",
-                          background: tmAccent || V.accent }} />
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+                {"\u9001\u4fe1"}
+              </button>
+            </div>
           </div>
+
+          {/* Hidden template file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pptx"
+            style={{ display: "none" }}
+            onChange={e => { if (e.target.files?.[0]) handleTemplateUpload(e.target.files[0]); }}
+          />
         </div>
 
-        {/* Right: Preview (35%) - empty until "PPTプレビュー" clicked */}
+        {/* Center: Slide Content (32%) */}
         <div style={{
-          flex: "0 0 35%",
+          width: "32%", borderRight: `1px solid ${V.border}`,
           display: "flex", flexDirection: "column",
           background: V.main, overflow: "hidden"
         }}>
           <div style={{
-            padding: "12px 16px",
-            borderBottom: `1px solid ${V.border}`,
-            fontSize: "12px", fontWeight: 600, color: V.t3,
-            background: V.white,
-            display: "flex", justifyContent: "space-between", alignItems: "center"
+            padding: "8px 14px", borderBottom: `1px solid ${V.border}`,
+            display: "flex", alignItems: "center", gap: "6px", background: V.sb
           }}>
-            <span>👁️ プレビュー</span>
-            {previewing && (
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <button
-                  onClick={() => setCurSlide(Math.max(0, curSlide - 1))}
-                  disabled={curSlide === 0}
-                  style={{
-                    padding: "3px 7px", borderRadius: "4px",
-                    border: `1px solid ${V.border}`, background: V.white,
-                    cursor: curSlide === 0 ? "default" : "pointer",
-                    fontSize: "11px", opacity: curSlide === 0 ? 0.3 : 1
-                  }}
-                >◀</button>
-                <span style={{ fontSize: "11px", color: V.t4 }}>
-                  {curSlide + 1} / {slides.length}
-                </span>
-                <button
-                  onClick={() => setCurSlide(Math.min(slides.length - 1, curSlide + 1))}
-                  disabled={curSlide === slides.length - 1}
-                  style={{
-                    padding: "3px 7px", borderRadius: "4px",
-                    border: `1px solid ${V.border}`, background: V.white,
-                    cursor: curSlide === slides.length - 1 ? "default" : "pointer",
-                    fontSize: "11px", opacity: curSlide === slides.length - 1 ? 0.3 : 1
-                  }}
-                >▶</button>
-              </div>
-            )}
+            <span style={{ fontSize: "14px", fontWeight: 600, color: V.accent }}>{"\ud83d\udcdd \u69cb\u6210"}</span>
+            <span style={{ fontSize: "12px", color: V.t3, fontWeight: 400, marginLeft: "auto" }}>
+              {slides.length} slides
+            </span>
           </div>
 
-          {!previewing ? (
-            /* Empty state */
-            <div style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-              padding: "24px", textAlign: "center"
-            }}>
-              <div style={{ color: V.t4, fontSize: "13px", lineHeight: 1.6 }}>
-                <div style={{ fontSize: "40px", marginBottom: "12px", opacity: 0.3 }}>📊</div>
-                テキスト内容を確定したら<br/>
-                「PPTプレビュー」で確認できます
-              </div>
-            </div>
-          ) : (
-            /* Slide preview - scalable virtual canvas approach */
-            <>
-              <div style={{
-                flex: 1, overflow: "hidden", padding: "12px",
-                display: "flex", alignItems: "center", justifyContent: "center"
-              }}>
-                {/* Outer wrapper maintains aspect ratio and scales the virtual canvas */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
+            {slides.map((s, i) => {
+              const isActive = i === curSlide;
+              const layoutIcon = LAYOUT_ICONS[s.layoutLabel] || "\u25a6";
+              return (
                 <div
-                  ref={el => {
-                    if (!el) return;
-                    const ro = new ResizeObserver(() => {
-                      const W = el.clientWidth, H = el.clientHeight;
-                      const inner = el.firstChild;
-                      if (!inner) return;
-                      // Virtual canvas is 960x540 (16:9), scale to fit container
-                      const scale = Math.min(W / 960, H / 540);
-                      inner.style.transform = `scale(${scale})`;
-                    });
-                    ro.observe(el);
-                    // cleanup on unmount handled by React
-                  }}
+                  key={s.id}
+                  onClick={() => setCurSlide(i)}
                   style={{
-                    width: "100%", height: "100%",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    overflow: "hidden"
+                    background: V.white, borderRadius: "8px",
+                    border: `2px solid ${isActive ? V.accent : V.border}`,
+                    padding: "12px", marginBottom: "8px", cursor: "pointer",
+                    transition: "all 0.12s",
+                    boxShadow: isActive ? "0 2px 8px rgba(60,89,150,0.12)" : "none"
                   }}
                 >
-                  {/* Virtual 960x540 canvas - always renders at this size, then CSS-scaled */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                    <span style={{
+                      fontSize: "11px", fontWeight: 700, color: V.white,
+                      background: isActive ? V.accent : V.t4,
+                      padding: "2px 7px", borderRadius: "4px"
+                    }}>{i + 1}</span>
+                    <span style={{
+                      fontSize: "14px", fontWeight: 600,
+                      color: isActive ? V.accent : V.t1
+                    }}>{s.title}</span>
+                    <span style={{
+                      fontSize: "11px", padding: "2px 8px", borderRadius: "4px",
+                      background: isActive ? "rgba(60,89,150,0.06)" : V.main,
+                      color: isActive ? V.accent : V.t3, fontWeight: 500, whiteSpace: "nowrap"
+                    }}>{layoutIcon} {s.layoutLabel}</span>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: "4px" }}>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); moveSlide(i, -1); }}
+                        style={{ cursor: "pointer", fontSize: "12px", color: V.t4, padding: "2px 4px" }}
+                        title={"\u4e0a\u306b\u79fb\u52d5"}
+                      >{"\u2191"}</span>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); moveSlide(i, 1); }}
+                        style={{ cursor: "pointer", fontSize: "12px", color: V.t4, padding: "2px 4px" }}
+                        title={"\u4e0b\u306b\u79fb\u52d5"}
+                      >{"\u2193"}</span>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); deleteSlide(i); }}
+                        style={{ cursor: "pointer", fontSize: "12px", color: V.t4, padding: "2px 4px" }}
+                        title={"\u524a\u9664"}
+                      >{"\u2715"}</span>
+                    </div>
+                  </div>
                   <div style={{
-                    width: "960px", height: "540px",
-                    flexShrink: 0,
-                    borderRadius: "8px",
-                    ...getPreviewBg(slide),
-                    border: `1px solid ${V.border}`,
-                    overflow: "hidden",
-                    boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-                    position: "relative",
-                    transformOrigin: "center center"
-                  }}>
-                    {/* Template visual elements layer */}
-                    {templateFile && templateInfo && (() => {
-                      const isCov = slide.layout === "cover" || slide.layout === "closing";
-                      const elms = isCov ? (templateInfo.coverElements || []) : (templateInfo.contentElements || []);
-                      return elms.map((el, idx) => {
-                        if (el.type === "rect") return (
-                          <div key={`te${idx}`} style={{
-                            position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
-                            width:`${el.w}%`, height:`${el.h}%`,
-                            background: el.fill, opacity: el.opacity ?? 1,
-                            pointerEvents:"none", zIndex: 1
-                          }} />
-                        );
-                        if (el.type === "img") return (
-                          <img key={`te${idx}`} src={el.src} alt="" style={{
-                            position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
-                            width:`${el.w}%`, height:`${el.h}%`,
-                            objectFit:"contain", pointerEvents:"none", zIndex: 1
-                          }} />
-                        );
-                        return null;
-                      });
-                    })()}
-
-                    {/* Text content layer */}
+                    fontSize: "13px", fontWeight: 600, color: V.t1, marginBottom: "3px"
+                  }}>{(s.heading || "").replace(/\n/g, " ")}</div>
+                  {s.sub && (
+                    <div style={{ fontSize: "12px", color: V.accent, marginBottom: "3px" }}>{s.sub}</div>
+                  )}
+                  {s.body && (
                     <div style={{
-                      position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
-                      zIndex: 2,
-                      display: "flex", flexDirection: "column",
-                      alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
-                      justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
-                      padding: "48px",
-                      color: getPreviewTextColor(slide)
-                    }}>
+                      fontSize: "12px", color: V.t3, lineHeight: 1.5,
+                      maxHeight: isActive ? "none" : "52px", overflow: "hidden",
+                      whiteSpace: "pre-wrap"
+                    }}>{s.body}</div>
+                  )}
+                  {s.note && (
+                    <div style={{ fontSize: "11px", color: V.t4, marginTop: "4px", fontStyle: "italic" }}>{s.note}</div>
+                  )}
+                  <div style={{
+                    display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "6px",
+                    paddingTop: "6px", borderTop: `1px solid ${V.border}`
+                  }}>
+                    {(s.ai || []).map((a, ai) => (
+                      <span key={ai} style={{
+                        display: "inline-flex", alignItems: "center", gap: "3px",
+                        fontSize: "10px", padding: "2px 6px", borderRadius: "4px",
+                        background: `${MODEL_COLORS[a.model] || "#999"}10`,
+                        color: MODEL_COLORS[a.model] || "#999",
+                        border: `1px solid ${MODEL_COLORS[a.model] || "#999"}25`,
+                        whiteSpace: "nowrap"
+                      }}>
+                        {a.icon} {a.part}
+                      </span>
+                    ))}
+                    {(s.dataSrc || []).map((d, di) => (
+                      <span key={`ds${di}`} style={{
+                        display: "inline-flex", alignItems: "center", gap: "2px",
+                        fontSize: "10px", padding: "1px 5px", borderRadius: "3px",
+                        background: "rgba(46,125,50,0.06)", color: V.green, whiteSpace: "nowrap"
+                      }}>
+                        {"\ud83d\udcca"} {d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <div
+              onClick={addSlide}
+              style={{
+                padding: "10px", border: `2px dashed ${V.border}`, borderRadius: "8px",
+                textAlign: "center", color: V.t3, fontSize: "13px",
+                cursor: "pointer", marginTop: "4px"
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = V.accent}
+              onMouseLeave={e => e.currentTarget.style.borderColor = V.border}
+            >
+              {"\uff0b \u30b9\u30e9\u30a4\u30c9\u3092\u8ffd\u52a0"}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: PPT Preview (38%) - always visible */}
+        <div style={{
+          flex: 1, display: "flex", flexDirection: "column", background: "#E8EAF0"
+        }}>
+          <div style={{
+            padding: "8px 14px", borderBottom: `1px solid ${V.border}`,
+            display: "flex", alignItems: "center", gap: "6px", background: V.sb
+          }}>
+            <span style={{ fontSize: "14px", fontWeight: 600, color: V.accent }}>{"\ud83d\udda5\ufe0f \u30d7\u30ec\u30d3\u30e5\u30fc"}</span>
+            <span style={{ fontSize: "12px", color: V.t3, fontWeight: 400, marginLeft: "auto" }}>
+              {curSlide + 1} / {slides.length}
+            </span>
+          </div>
+
+          <div style={{
+            flex: 1, display: "flex", flexDirection: "column", padding: "14px", overflow: "hidden"
+          }}>
+            {/* Main slide preview */}
+            <div style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              overflow: "hidden", marginBottom: "12px"
+            }}>
+              <div
+                ref={el => {
+                  if (!el) return;
+                  const ro = new ResizeObserver(() => {
+                    const W = el.clientWidth, H = el.clientHeight;
+                    const inner = el.firstChild;
+                    if (!inner) return;
+                    const scale = Math.min(W / 960, H / 540);
+                    inner.style.transform = `scale(${scale})`;
+                  });
+                  ro.observe(el);
+                }}
+                style={{
+                  width: "100%", height: "100%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  overflow: "hidden"
+                }}
+              >
+                <div style={{
+                  width: "960px", height: "540px", flexShrink: 0,
+                  borderRadius: "6px",
+                  ...getPreviewBg(slide),
+                  border: `1px solid ${V.border}`,
+                  overflow: "hidden",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
+                  position: "relative",
+                  transformOrigin: "center center"
+                }}>
+                  {templateFile && templateInfo && (() => {
+                    const isCov = slide.layout === "cover" || slide.layout === "closing";
+                    const elms = isCov ? (templateInfo.coverElements || []) : (templateInfo.contentElements || []);
+                    return elms.map((el, idx) => {
+                      if (el.type === "rect") return (
+                        <div key={`te${idx}`} style={{
+                          position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
+                          width:`${el.w}%`, height:`${el.h}%`,
+                          background: el.fill, opacity: el.opacity ?? 1,
+                          pointerEvents:"none", zIndex: 1
+                        }} />
+                      );
+                      if (el.type === "img") return (
+                        <img key={`te${idx}`} src={el.src} alt="" style={{
+                          position:"absolute", left:`${el.x}%`, top:`${el.y}%`,
+                          width:`${el.w}%`, height:`${el.h}%`,
+                          objectFit:"contain", pointerEvents:"none", zIndex: 1
+                        }} />
+                      );
+                      return null;
+                    });
+                  })()}
+
+                  <div style={{
+                    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                    zIndex: 2,
+                    display: "flex", flexDirection: "column",
+                    alignItems: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
+                    justifyContent: (slide.layout === "cover" || slide.layout === "closing") ? "center" : "flex-start",
+                    padding: "48px",
+                    color: getPreviewTextColor(slide)
+                  }}>
                     {(slide.layout === "cover" || slide.layout === "closing") ? (
                       <>
                         <div style={{
                           fontSize: "48px", fontWeight: 800,
                           textAlign: "center", lineHeight: 1.3, marginBottom: "20px",
                           fontFamily: tmHeadingFont || "inherit",
-                          color: getPreviewTextColor(slide)
+                          color: getPreviewTextColor(slide),
+                          whiteSpace: "pre-wrap"
                         }}>
                           {slide.heading || slide.title}
                         </div>
@@ -1290,31 +1391,105 @@ export default function CreatePptx({ setView }) {
                         </div>
                       </>
                     )}
-                    </div>{/* close text content layer */}
-                  </div>{/* close 960x540 virtual canvas */}
-                </div>{/* close scale wrapper */}
-              </div>
+                  </div>
 
-              <div style={{
-                padding: "10px 16px",
-                borderTop: `1px solid ${V.border}`,
-                background: V.white,
-                fontSize: "11px", color: V.t4,
-                display: "flex", justifyContent: "space-between", alignItems: "center"
-              }}>
-                <span><strong>{slide.heading || slide.title}</strong> — {slide.layoutLabel || slide.layout}</span>
-                {templateFile && (
-                  <span style={{
-                    fontSize: "10px", padding: "2px 8px",
-                    background: `${V.green}15`, color: V.green,
-                    borderRadius: "4px", fontWeight: 600
-                  }}>
-                    テンプレ適用
-                  </span>
-                )}
+                  {slide.dataSrc && slide.dataSrc.length > 0 && (
+                    <div style={{
+                      position: "absolute", bottom: 0, left: 0, right: 0,
+                      padding: "6px 24px", zIndex: 3,
+                      background: "rgba(46,125,50,0.04)",
+                      borderTop: "1px solid rgba(46,125,50,0.1)",
+                      display: "flex", gap: "8px", alignItems: "center"
+                    }}>
+                      <span style={{ fontSize: "10px", color: V.green, fontWeight: 600 }}>{"\u30c7\u30fc\u30bf\u53c2\u7167\uff1a"}</span>
+                      {slide.dataSrc.map((d, di) => (
+                        <span key={di} style={{
+                          fontSize: "10px", color: V.green,
+                          background: "rgba(46,125,50,0.08)",
+                          padding: "1px 6px", borderRadius: "3px"
+                        }}>{"\ud83d\udcca"} {d}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {slide.ai && slide.ai.length > 0 && (
+                    <div style={{
+                      position: "absolute", bottom: slide.dataSrc?.length ? "28px" : 0,
+                      left: 0, right: 0, zIndex: 3,
+                      padding: "4px 24px 6px",
+                      display: "flex", gap: "8px", alignItems: "center",
+                      borderTop: `1px solid ${V.border}`
+                    }}>
+                      {slide.ai.map((a, ai) => (
+                        <span key={ai} style={{
+                          fontSize: "9px", color: MODEL_COLORS[a.model] || "#999",
+                          display: "flex", alignItems: "center", gap: "2px"
+                        }}>
+                          {a.icon} {MODEL_NAMES[a.model] || a.model} {"\u2192"} {a.part}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </>
-          )}
+            </div>
+
+            {/* Thumbnail strip */}
+            <div style={{
+              display: "flex", gap: "8px", overflowX: "auto",
+              padding: "4px 0", flexShrink: 0
+            }}>
+              {slides.map((s, i) => (
+                <div
+                  key={s.id}
+                  onClick={() => setCurSlide(i)}
+                  style={{
+                    width: "120px", height: "68px", flexShrink: 0,
+                    borderRadius: "4px",
+                    border: `2px solid ${i === curSlide ? V.accent : V.border}`,
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    position: "relative",
+                    ...getPreviewBg(s)
+                  }}
+                >
+                  <div style={{
+                    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                    display: "flex", flexDirection: "column",
+                    alignItems: (s.layout === "cover" || s.layout === "closing") ? "center" : "flex-start",
+                    justifyContent: (s.layout === "cover" || s.layout === "closing") ? "center" : "flex-start",
+                    padding: "6px", overflow: "hidden"
+                  }}>
+                    <div style={{
+                      fontSize: "6px", fontWeight: 800,
+                      color: getPreviewTextColor(s),
+                      textAlign: (s.layout === "cover" || s.layout === "closing") ? "center" : "left",
+                      lineHeight: 1.2, whiteSpace: "pre-wrap",
+                      overflow: "hidden", maxHeight: "30px"
+                    }}>
+                      {(s.heading || s.title).replace(/\n/g, " ")}
+                    </div>
+                    {s.body && (
+                      <div style={{
+                        fontSize: "4px", color: getPreviewTextColor(s), opacity: 0.6,
+                        lineHeight: 1.2, marginTop: "2px", overflow: "hidden", maxHeight: "20px"
+                      }}>
+                        {s.body.substring(0, 80)}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{
+                    position: "absolute", bottom: "2px", right: "2px",
+                    fontSize: "8px", fontWeight: 700, color: V.white,
+                    background: i === curSlide ? V.accent : "rgba(0,0,0,0.4)",
+                    borderRadius: "3px", padding: "1px 4px"
+                  }}>
+                    {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
